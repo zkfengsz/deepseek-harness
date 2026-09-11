@@ -6,6 +6,9 @@ lib/
 pnpm-debug.log
 .pnpm-store/
 .cache/
+.xdg/
+.npm-cache/
+.bin/
 examples/*/*.jsonl
 .storages/
 .sessions/

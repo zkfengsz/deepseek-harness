@@ -283,6 +283,10 @@
     - id: ui-workspace
       name: '@deepseek-ai/dsh-client-ui-workspace'
 
+    # WorkBro application portal: one Workspace card per app in the blank-session hero.
+    - id: ui-home
+      name: '@deepseek-ai/dsh-client-ui-home'
+
     # Input triggers: the '/' | '@' pipeline (ui-input-trigger), the command surface over
     # it (ui-commands), and the reference sources (ui-skill / ui-reference).
     - id: ui-input-trigger

@@ -347,6 +347,15 @@ export function ConversationRoot({
     <div className={clsx(css.composerStack, hero && css.composerHero)}>
       {hero && <HeroShell t={t} renderSlot={renderSlot} />}
       {hero && heroWorkspaceRow}
+      {hero && renderSlot('conversation.hero.apps', {
+        onOpen: (workspaceId) => {
+          setPendingWorkspaceId(workspaceId)
+          void selectWorkspace(workspaceId).catch(() => {
+            setPendingWorkspaceId(current => current === workspaceId ? undefined : current)
+          })
+        },
+        selectedId: pendingWorkspaceId ?? sessionWorkspace?.workspaceId,
+      })}
       {zone !== undefined && renderSlot('conversation.input.dock', zone)}
       {inputBar}
     </div>
