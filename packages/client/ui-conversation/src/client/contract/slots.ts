@@ -272,6 +272,8 @@ export type ConvViewProps = PropsRuntime<'conversation.view'>
 export interface ConversationInjected {
   /** Connect and open a blank Session in the selected Workspace. */
   selectWorkspace: (workspaceId: WorkspaceId) => Promise<void>
+  /** Start a New Session in the optional Workspace (WorkBro app launch). */
+  startSession: (workspaceId?: WorkspaceId) => void
   /** Stage an agent preset for the next blank Session (WorkBro app launch). */
   stagePreset: (presetId: string) => void
   /** Session-addressed composer block source, or the stable absent source. */

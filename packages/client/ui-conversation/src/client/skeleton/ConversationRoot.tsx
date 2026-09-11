@@ -131,7 +131,7 @@ function WidthHandle(props: {
 export function ConversationRoot({
   sessionId, useSession, useSessions, useSessionPendingInteraction,
   useWorkspaces, useConversation, useInput, useComposerBlock,
-  renderSlot, renderSlotChain, selectWorkspace, stagePreset, t,
+  renderSlot, renderSlotChain, selectWorkspace, stagePreset, startSession, t,
 }: ConversationRootProps) {
   const session = useSession(s => s)
   const pendingInteraction = useSessionPendingInteraction(snapshot =>
@@ -355,6 +355,8 @@ export function ConversationRoot({
             void selectWorkspace(app.workspaceId).catch(() => {
               setPendingWorkspaceId(current => current === app.workspaceId ? undefined : current)
             })
+          } else {
+            startSession()
           }
         },
         selectedAppId: undefined,

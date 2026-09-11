@@ -97,6 +97,7 @@ interface WorkspaceNavigation {
     workspaceId: Parameters<ConversationInjected['selectWorkspace']>[0],
     beforeOpen: (sessionId: SessionId) => void,
   ): Promise<void>
+  startSession(workspaceId?: Parameters<ConversationInjected['selectWorkspace']>[0]): void
 }
 
 /** Action registration used by the composer without importing its command-UI consumer. */
@@ -264,6 +265,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
         composerBlock: sessionId === undefined ? ABSENT_BLOCK : composerBlocks.storeFor(sessionId),
       },
       stagePreset: (presetId) => { ctx.emit('workbro/stage-preset', presetId) },
+      startSession: (workspaceId) => { workspaceNavigation.startSession(workspaceId) },
       selectWorkspace: workspaceId => workspaceNavigation.openWorkspace(workspaceId, (nextId) => {
         if (sessionId !== undefined && nextId !== sessionId) {
           const from = inputHub.shell(sessionId)
