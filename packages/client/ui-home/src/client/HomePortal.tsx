@@ -36,16 +36,21 @@ export function HomePortal({ useApps, onOpenApp, selectedAppId, createApp, t }: 
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
   const [preset, setPreset] = useState('')
+  const [error, setError] = useState<string | undefined>(undefined)
 
   const submit = () => {
     const trimmed = name.trim()
     if (trimmed === '') return
     const presetValue = preset.trim()
-    void createApp(presetValue === '' ? { name: trimmed } : { name: trimmed, preset: presetValue }).then(() => {
-      setName('')
-      setPreset('')
-      setCreating(false)
-    })
+    setError(undefined)
+    void createApp(presetValue === '' ? { name: trimmed } : { name: trimmed, preset: presetValue }).then(
+      () => {
+        setName('')
+        setPreset('')
+        setCreating(false)
+      },
+      (reason: unknown) => { setError(reason instanceof Error ? reason.message : String(reason)) },
+    )
   }
 
   return (
@@ -67,6 +72,7 @@ export function HomePortal({ useApps, onOpenApp, selectedAppId, createApp, t }: 
             />
             <button type="button" className={css.action} onClick={submit}>{t('portal.create.action')}</button>
             <button type="button" className={css.action} onClick={() => { setCreating(false) }}>{t('portal.cancel')}</button>
+            {error !== undefined && <p className={css.error}>{error}</p>}
           </div>
         )
         : <button type="button" className={css.action} onClick={() => { setCreating(true) }}>{t('portal.create')}</button>}

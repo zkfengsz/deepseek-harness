@@ -1,7 +1,7 @@
 /** React-free Client WorkBro application service over the `app` Remote namespace. */
 import { Service, type Context } from '@deepseek-ai/cordis'
 // Type-only: pull the Client Remote face (ctx.remote) and its app namespace.
-import type {} from '@deepseek-ai/dsh-api-gateway/client'
+import type { ClientRemote } from '@deepseek-ai/dsh-api-gateway/client'
 import type {} from '@deepseek-ai/dsh-api-app-controller/remote'
 import type { AppId } from '@deepseek-ai/dsh-app-registry/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
@@ -20,6 +20,9 @@ export interface AppSource {
   getSnapshot(): AppSnapshot
   subscribe(listener: () => void): () => void
 }
+
+/** The mounted `app` Remote namespace. */
+type AppRemote = ClientRemote['app']
 
 /** WorkBro application Client service face. */
 export interface IApps {
@@ -59,43 +62,43 @@ export class AppsService extends Service implements IApps {
     },
   }
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, private readonly remoteApp: AppRemote) {
     super(ctx, 'apps')
     void this.refresh()
   }
 
   private refresh(): Promise<void> {
-    return this.ctx.remote.app.list().then((result) => {
+    return this.remoteApp.list().then((result) => {
       this.snapshot = { apps: unwrap(result).apps }
       for (const listener of this.listeners) listener()
     })
   }
 
   async create(input: Parameters<IApps['create']>[0]): Promise<AppView> {
-    const value = unwrap(await this.ctx.remote.app.create(input))
+    const value = unwrap(await this.remoteApp.create(input))
     await this.refresh()
     return value.app
   }
 
   async rename(appId: AppId, name: string): Promise<AppView> {
-    const value = unwrap(await this.ctx.remote.app.rename({ appId, name }))
+    const value = unwrap(await this.remoteApp.rename({ appId, name }))
     await this.refresh()
     return value.app
   }
 
   async bindWorkspace(appId: AppId, workspaceId?: WorkspaceId): Promise<AppView> {
-    const value = unwrap(await this.ctx.remote.app.bindWorkspace({ appId, workspaceId }))
+    const value = unwrap(await this.remoteApp.bindWorkspace({ appId, workspaceId }))
     await this.refresh()
     return value.app
   }
 
   async delete(appId: AppId): Promise<void> {
-    unwrap(await this.ctx.remote.app.delete({ appId }))
+    unwrap(await this.remoteApp.delete({ appId }))
     await this.refresh()
   }
 }
 
 /** Install Client WorkBro application state and commands. */
 export function apply(ctx: Context): void {
-  new AppsService(ctx)
+  new AppsService(ctx, ctx.remote.app)
 }
