@@ -348,13 +348,16 @@ export function ConversationRoot({
       {hero && <HeroShell t={t} renderSlot={renderSlot} />}
       {hero && heroWorkspaceRow}
       {hero && renderSlot('conversation.hero.apps', {
-        onOpen: (workspaceId) => {
-          setPendingWorkspaceId(workspaceId)
-          void selectWorkspace(workspaceId).catch(() => {
-            setPendingWorkspaceId(current => current === workspaceId ? undefined : current)
-          })
+        onOpenApp: (app) => {
+          if (app.workspaceId !== undefined) {
+            setPendingWorkspaceId(app.workspaceId)
+            void selectWorkspace(app.workspaceId).catch(() => {
+              setPendingWorkspaceId(current => current === app.workspaceId ? undefined : current)
+            })
+          }
+          // TODO(app): stage `app.preset` before the session opens.
         },
-        selectedId: pendingWorkspaceId ?? sessionWorkspace?.workspaceId,
+        selectedAppId: undefined,
       })}
       {zone !== undefined && renderSlot('conversation.input.dock', zone)}
       {inputBar}

@@ -1,78 +1,59 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { WorkspaceSnapshot, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { AppSnapshot, AppView } from '@deepseek-ai/dsh-api-app-controller/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import { HomePortal, type HomePortalProps } from '../src/client/HomePortal.tsx'
 import { zh } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 
-/** The shipped Chinese dictionary as the component's t seat. */
 const t = ((key: string) => (zh as Record<string, string>)[key] ?? key) as HomePortalProps['t']
 
-const workspaces: readonly WorkspaceView[] = [
-  {
-    workspaceId: 'ws-1' as never,
-    path: '/proj/alpha',
-    title: 'Alpha',
-    sessionIds: ['s1' as never, 's2' as never],
-    createdAt: '0',
-    updatedAt: '0',
-  },
-  {
-    workspaceId: 'ws-2' as never,
-    path: '/proj/beta',
-    title: 'Beta',
-    sessionIds: [],
-    createdAt: '0',
-    updatedAt: '0',
-  },
+const apps: readonly AppView[] = [
+  { appId: 'app-1' as never, name: '合规巡检台', icon: '🛡️', description: '批量制裁筛查', preset: 'compliance' },
+  { appId: 'app-2' as never, name: '拓客', description: '找客户' },
 ]
 
-function snapshot(items: readonly WorkspaceView[]): WorkspaceSnapshot {
-  return { items, archivedSessionIds: [], state: 'idle', phase: 'ready', error: null }
+function snapshot(items: readonly AppView[]): AppSnapshot {
+  return { apps: items }
 }
 
-function bench(items: readonly WorkspaceView[] = workspaces) {
-  const onOpen = vi.fn()
-  const useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot> = sel => sel(snapshot(items))
-  const props = { useWorkspaces, onOpen, selectedId: undefined, t } as HomePortalProps
-  return { props, onOpen }
+function bench(items: readonly AppView[] = apps) {
+  const onOpenApp = vi.fn()
+  const useApps: SnapshotSelectorHook<AppSnapshot> = sel => sel(snapshot(items))
+  const props = { useApps, onOpenApp, selectedAppId: undefined, t } as HomePortalProps
+  return { props, onOpenApp }
 }
 
 describe('HomePortal', () => {
-  it('renders one card per workspace', () => {
+  it('renders one card per app', () => {
     render(<HomePortal {...bench().props} />)
-    expect(screen.getByText('Alpha')).toBeTruthy()
-    expect(screen.getByText('Beta')).toBeTruthy()
-    expect(screen.getByText('/proj/alpha')).toBeTruthy()
-    expect(screen.getByText(/2/)).toBeTruthy()
+    expect(screen.getByText('合规巡检台')).toBeTruthy()
+    expect(screen.getByText('拓客')).toBeTruthy()
   })
 
-  it('opens a workspace when its card is clicked', () => {
-    const { props, onOpen } = bench()
+  it('opens an app when its card is clicked', () => {
+    const { props, onOpenApp } = bench()
     render(<HomePortal {...props} />)
-    fireEvent.click(screen.getByRole('button', { name: '打开应用: Alpha' }))
-    expect(onOpen).toHaveBeenCalledWith('ws-1')
+    fireEvent.click(screen.getByRole('button', { name: '打开应用: 合规巡检台' }))
+    expect(onOpenApp).toHaveBeenCalledWith(apps[0])
   })
 
-  it('marks the selected workspace as current', () => {
+  it('marks the selected app as current', () => {
     const { props } = bench()
-    render(<HomePortal {...({ ...props, selectedId: 'ws-1' as never })} />)
-    expect(screen.getByRole('button', { name: '打开应用: Alpha' }).getAttribute('aria-current')).toBe('true')
+    render(<HomePortal {...({ ...props, selectedAppId: 'app-1' as never })} />)
+    expect(screen.getByRole('button', { name: '打开应用: 合规巡检台' }).getAttribute('aria-current')).toBe('true')
   })
 
-  it('renders the empty placeholder when no workspace exists', () => {
+  it('renders the app icon and preset', () => {
+    render(<HomePortal {...bench().props} />)
+    expect(screen.getByText('🛡️')).toBeTruthy()
+    expect(screen.getByText('compliance')).toBeTruthy()
+  })
+
+  it('renders the empty placeholder when no app exists', () => {
     render(<HomePortal {...bench([]).props} />)
     expect(screen.getByText('暂无应用')).toBeTruthy()
-  })
-
-  it('renders the app icon, name, and description when a manifest exists', () => {
-    const withApp = [{ ...workspaces[0]!, app: { name: '合规巡检台', icon: '🛡️', description: '批量制裁筛查' } }]
-    render(<HomePortal {...bench(withApp).props} />)
-    expect(screen.getByText('🛡️')).toBeTruthy()
-    expect(screen.getByText('合规巡检台')).toBeTruthy()
-    expect(screen.getByText('批量制裁筛查')).toBeTruthy()
   })
 })

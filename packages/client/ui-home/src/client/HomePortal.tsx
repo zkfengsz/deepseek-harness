@@ -1,53 +1,60 @@
 /**
- * WorkBro application portal: one card per Workspace, opening its blank
- * session on click. Read-only presentation over the global useWorkspaces
- * standard hook; launching stays in the owner's onOpen callback.
+ * WorkBro application portal: one card per WorkBro app, opening it on click.
+ * Read-only presentation over a registrant-private useApps hook; launching
+ * stays in the owner's onOpenApp callback.
  */
 import clsx from 'clsx'
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-// Type-only: pull the hero apps slot declaration and the useWorkspaces standard hook.
+import type { PropsHooks, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { AppSource } from '@deepseek-ai/dsh-api-app-controller/client'
+// Type-only: pull the hero apps slot declaration.
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import css from './HomePortal.module.css'
 
+/** Inject face of the portal: the private app snapshot source. */
+export interface HomePortalInjected {
+  hooks: { apps: AppSource }
+}
+
 /** Full props of the WorkBro application portal. */
-export type HomePortalProps = PropsRuntime<'conversation.hero.apps'> & PropsLocale<'home'>
+export type HomePortalProps =
+  PropsRuntime<'conversation.hero.apps'>
+  & PropsHooks<HomePortalInjected['hooks']>
+  & PropsLocale<'home'>
 
 /**
- * Render the portal: a card per Workspace, or a placeholder when none exist.
- * @param props - owner onOpen/selectedId, the useWorkspaces selector, and t.
+ * Render the portal: a card per app, or a placeholder when none exist.
+ * @param props - owner onOpenApp/selectedAppId, the useApps selector, and t.
  * @returns the portal section element.
  */
-export function HomePortal({ useWorkspaces, onOpen, selectedId, t }: HomePortalProps) {
-  const workspaces = useWorkspaces(snapshot => snapshot.items)
+export function HomePortal({ useApps, onOpenApp, selectedAppId, t }: HomePortalProps) {
+  const apps = useApps(snapshot => snapshot.apps)
   return (
     <section className={css.root} aria-label={t('portal.title')}>
-      {workspaces.length === 0
+      {apps.length === 0
         ? <p className={css.empty}>{t('portal.empty')}</p>
         : (
           <ul className={css.grid}>
-            {workspaces.map((workspace) => {
-              const active = workspace.workspaceId === selectedId
-              const app = workspace.app
+            {apps.map((app) => {
+              const active = app.appId === selectedAppId
               return (
-                <li key={workspace.workspaceId}>
+                <li key={app.appId}>
                   <button
                     type="button"
                     className={clsx(css.card, active && css.active)}
-                    aria-label={`${t('portal.open.aria')}: ${app?.name ?? workspace.title}`}
+                    aria-label={`${t('portal.open.aria')}: ${app.name}`}
                     aria-current={active ? 'true' : undefined}
-                    onClick={() => { onOpen(workspace.workspaceId) }}
+                    onClick={() => { onOpenApp(app) }}
                   >
                     <span className={css.title}>
-                      {app?.icon !== undefined && <span className={css.icon} aria-hidden="true">{app.icon}</span>}
-                      {app?.name ?? workspace.title}
+                      {app.icon !== undefined && <span className={css.icon} aria-hidden="true">{app.icon}</span>}
+                      {app.name}
                     </span>
-                    {app?.description !== undefined
+                    {app.description !== undefined
                       ? <span className={css.path}>{app.description}</span>
-                      : <span className={css.path}>{workspace.path}</span>}
-                    <span className={css.count}>
-                      {workspace.sessionIds.length} {t('portal.sessions')}
-                    </span>
+                      : null}
+                    {app.preset !== undefined
+                      ? <span className={css.count}>{app.preset}</span>
+                      : null}
                   </button>
                 </li>
               )

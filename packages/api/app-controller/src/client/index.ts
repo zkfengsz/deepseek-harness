@@ -1,10 +1,13 @@
 /** React-free Client WorkBro application service over the `app` Remote namespace. */
 import { Service, type Context } from '@deepseek-ai/cordis'
-import type { AppId } from '@deepseek-ai/dsh-app-registry'
+// Type-only: pull the Client Remote face (ctx.remote) and its app namespace.
+import type {} from '@deepseek-ai/dsh-api-gateway/client'
+import type {} from '@deepseek-ai/dsh-api-app-controller/remote'
+import type { AppId } from '@deepseek-ai/dsh-app-registry/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 import type { AppView } from '../types.ts'
 
-export type { AppId } from '@deepseek-ai/dsh-app-registry'
+export type { AppId } from '@deepseek-ai/dsh-app-registry/types'
 export type { AppView } from '../types.ts'
 
 /** Snapshot of the complete app list. */
@@ -37,6 +40,12 @@ declare module '@deepseek-ai/cordis' {
 /** Required Client Remote services. */
 export const inject = ['remote', 'remote.app']
 
+/** Unwrap a Remote result, throwing its business failure as an Error. */
+function unwrap<T>(result: { ok: true; value: T } | { ok: false; error: { message: string } }): T {
+  if (!result.ok) throw new Error(result.error.message)
+  return result.value
+}
+
 /** Owns the bare app snapshot and app commands, refreshing after each mutation. */
 export class AppsService extends Service implements IApps {
   private snapshot: AppSnapshot = { apps: [] }
@@ -56,32 +65,32 @@ export class AppsService extends Service implements IApps {
   }
 
   private refresh(): Promise<void> {
-    return this.ctx.remote.app.list().then((value) => {
-      this.snapshot = { apps: value.apps }
+    return this.ctx.remote.app.list().then((result) => {
+      this.snapshot = { apps: unwrap(result).apps }
       for (const listener of this.listeners) listener()
     })
   }
 
   async create(input: Parameters<IApps['create']>[0]): Promise<AppView> {
-    const value = await this.ctx.remote.app.create(input)
+    const value = unwrap(await this.ctx.remote.app.create(input))
     await this.refresh()
     return value.app
   }
 
   async rename(appId: AppId, name: string): Promise<AppView> {
-    const value = await this.ctx.remote.app.rename({ appId, name })
+    const value = unwrap(await this.ctx.remote.app.rename({ appId, name }))
     await this.refresh()
     return value.app
   }
 
   async bindWorkspace(appId: AppId, workspaceId?: WorkspaceId): Promise<AppView> {
-    const value = await this.ctx.remote.app.bindWorkspace({ appId, workspaceId })
+    const value = unwrap(await this.ctx.remote.app.bindWorkspace({ appId, workspaceId }))
     await this.refresh()
     return value.app
   }
 
   async delete(appId: AppId): Promise<void> {
-    await this.ctx.remote.app.delete({ appId })
+    unwrap(await this.ctx.remote.app.delete({ appId }))
     await this.refresh()
   }
 }

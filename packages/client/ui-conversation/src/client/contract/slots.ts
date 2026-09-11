@@ -14,6 +14,7 @@ import type { SessionPendingInteraction } from '@deepseek-ai/dsh-client-ui-sessi
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import type { AppId, AppView } from '@deepseek-ai/dsh-api-app-controller/client'
 import type { ComposerBlock } from './composer-blocks.ts'
 import type {
   ComposerKeyboard, DraftAttachmentId, EditSelection, InputActions, InputNotice, InputState,
@@ -220,10 +221,10 @@ export interface HeroAgentPresetOwnerProps {
 
 /** Owner share of the Hero application portal. */
 export interface HeroAppsOwnerProps {
-  /** Open a workspace as its blank session (reuse-or-create). */
-  onOpen: (workspaceId: WorkspaceId) => void
-  /** Currently selected workspace, when available. */
-  selectedId?: WorkspaceId | undefined
+  /** Open a WorkBro application (its bound workspace and preset). */
+  onOpenApp: (app: AppView) => void
+  /** Currently selected app, when available. */
+  selectedAppId?: AppId | undefined
 }
 
 /** Header actions derive their state from standard Session props. */

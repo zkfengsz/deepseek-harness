@@ -21,6 +21,9 @@
       "path": "../../api/workspace-controller/tsconfig.client.json"
     },
     {
+      "path": "../../api/app-controller/tsconfig.client.json"
+    },
+    {
       "path": "../../attachment/attachment"
     },
     {

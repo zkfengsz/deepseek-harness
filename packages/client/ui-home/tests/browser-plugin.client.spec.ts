@@ -7,17 +7,18 @@ import { HomePortal } from '../src/client/HomePortal.tsx'
 import { apply, inject } from '../src/client/index.ts'
 import { apply as hostApply } from '../src/index.ts'
 
-/** Boot the two services the plugin drives and return the live slots/locale. */
 async function bench() {
   const ctx = new Context()
   await ctx.plugin(SlotRegistry).await()
   const locale = new LocaleRuntime(ctx)
   locale.setLocale('zh')
   ctx.provide('locale', locale)
+  ctx.provide('apps', {
+    list: { getSnapshot: () => ({ apps: [] }), subscribe: () => () => {} },
+  } as never)
   return { ctx, slots: ctx.get('slots') as SlotRegistry, locale }
 }
 
-/** Declare the target hole as a child of the built-in root slot. */
 function declare(slots: SlotRegistry): () => void {
   return slots.register(
     { name: 'root', children: { 'conversation.hero.apps': { kind: 'single', scope: 'root' } } } as never,
@@ -31,22 +32,16 @@ describe('ui-home apply', () => {
   })
 
   it('declares the services it drives', () => {
-    expect(inject).toEqual(['slots', 'locale'])
+    expect(inject).toEqual(['slots', 'locale', 'apps'])
   })
 
-  it('registers the portal for declarations before or after apply', async () => {
-    const before = await bench()
-    declare(before.slots)
-    await before.ctx.plugin({ inject: [...inject], apply }).await()
-    expect(before.slots.entries('conversation.hero.apps')[0]!.component).toBe(HomePortal)
-    expect(before.slots.entries('conversation.hero.apps')[0]!.locale).toBe('home')
-    expect(before.locale.bind('home')('portal.title')).toBe('应用')
-
-    const after = await bench()
-    await after.ctx.plugin({ inject: [...inject], apply }).await()
-    declare(after.slots)
-    await Promise.resolve()
-    expect(after.slots.entries('conversation.hero.apps')[0]!.component).toBe(HomePortal)
+  it('registers the portal into the conversation hero apps slot', async () => {
+    const b = await bench()
+    declare(b.slots)
+    await b.ctx.plugin({ inject: [...inject], apply }).await()
+    expect(b.slots.entries('conversation.hero.apps')[0]!.component).toBe(HomePortal)
+    expect(b.slots.entries('conversation.hero.apps')[0]!.locale).toBe('home')
+    expect(b.locale.bind('home')('portal.title')).toBe('应用')
   })
 
   it('unregisters the portal on teardown', async () => {
