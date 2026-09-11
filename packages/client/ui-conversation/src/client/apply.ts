@@ -264,7 +264,10 @@ export function apply(ctx: Context, config: Config = Config({})): void {
       hooks: {
         composerBlock: sessionId === undefined ? ABSENT_BLOCK : composerBlocks.storeFor(sessionId),
       },
-      stagePreset: (presetId) => { ctx.emit('workbro/stage-preset', presetId) },
+      // Emitted from the root: a client event only trickles DOWN from its
+      // emitting context, so a sibling plugin (the agent-preset seat) never
+      // sees one raised on this plugin's own scope.
+      stagePreset: (presetId) => { ctx.root.emit('workbro/stage-preset', presetId) },
       startSession: (workspaceId) => { workspaceNavigation.startSession(workspaceId) },
       selectWorkspace: workspaceId => workspaceNavigation.openWorkspace(workspaceId, (nextId) => {
         if (sessionId !== undefined && nextId !== sessionId) {
