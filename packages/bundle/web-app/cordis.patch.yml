@@ -75,6 +75,10 @@
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
 
+    # WorkBro application registry: durable first-class app records.
+    - id: app-registry
+      name: '@deepseek-ai/dsh-app-registry'
+
     - id: session-reference
       name: '@deepseek-ai/dsh-session-reference'
 
