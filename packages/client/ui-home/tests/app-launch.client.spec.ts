@@ -10,7 +10,7 @@
  * between them exists.
  */
 import { describe, expect, vi } from 'vitest'
-import { ok, type RemoteMock, type StreamScript } from '@deepseek-ai/dsh-remote-mock'
+import { ok, openStream, type RemoteMock, type StreamScript } from '@deepseek-ai/dsh-remote-mock'
 import { SESSION_FORMAT_VERSION, type SessionId } from '@deepseek-ai/dsh-session/types'
 import { createClientTest, webApp, type TestClient } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
 
@@ -48,12 +48,27 @@ function emptyFollow(): StreamScript {
   }
 }
 
+/** The Workspace every launch in this spec connects, as the follow baseline carries it. */
+const WORKSPACE = {
+  workspaceId: 'ws-workbro',
+  path: '/tmp/workbro-ws',
+  title: 'workbro-ws',
+  sessionIds: [sid('session-reused')],
+  createdAt: '2026-09-11T00:00:00.000Z',
+  updatedAt: '2026-09-11T00:00:00.000Z',
+}
+
 /** Add one Session to the list the way the Host announces it. */
-async function added(mock: RemoteMock, id: string, blank: boolean): Promise<void> {
+async function added(
+  mock: RemoteMock,
+  id: string,
+  blank: boolean,
+  cwd?: string,
+): Promise<void> {
   mock.streams.push(EVENTS, {
     type: 'emit',
     event: 'api-session/added',
-    args: [{ sessionId: sid(id), updatedAt: 1, running: !blank, blank }],
+    args: [{ sessionId: sid(id), updatedAt: 1, running: !blank, blank, ...(cwd === undefined ? {} : { cwd }) }],
   })
   await mock.streams.drained(EVENTS)
 }
@@ -88,6 +103,40 @@ describe('WorkBro app launch', () => {
 
     await vi.waitFor(() => {
       expect(mock.remote.agentPresets.select).toHaveBeenCalledWith(sid('session-launched'), 'minimal')
+    })
+  }, COLD_BOOT_TIMEOUT_MS)
+
+  test('applies a launched app preset when the launch reuses the Session on screen', async ({ mock, start }) => {
+    mock.remote.agentPresets.select.mockResolvedValue(ok('minimal'))
+    mock.remote.subagents.list.mockResolvedValue(ok({ entries: [], parentAvailable: true }))
+    mock.remote.session.create.mockResolvedValue(ok({ sessionId: sid('session-created') }))
+    mock.stream(FOLLOW, emptyFollow())
+    mock.stream('workspace/follow', openStream([
+      { type: 'baseline', value: { items: [WORKSPACE], archivedSessionIds: [] } },
+    ]))
+    const client: TestClient = await start()
+    const sessions = client.ctx.sessions
+    await vi.waitFor(() => { expect(sessions.list.getSnapshot().phase).toBe('ready') })
+
+    // The blank Session on screen already belongs to the app's Workspace, so
+    // connecting that Workspace reuses it and the launch lands where it began.
+    await added(mock, 'session-reused', true, WORKSPACE.path)
+    await vi.waitFor(() => { expect(sessions.list.getSnapshot().byId[sid('session-reused')]).toBeDefined() })
+    sessions.open(sid('session-reused'))
+
+    // The portal's own call site: the conversation root hands the pick to the
+    // bridge and then starts the Session, exactly as a card click does.
+    const entries = client.ctx.get('slots')!.entries('main.conversation')
+    expect(entries).toHaveLength(1)
+    const face = (entries[0]!.inject as unknown as (id: undefined) => {
+      stagePreset: (presetId: string) => void
+      startSession: (workspaceId?: string) => void
+    })(undefined)
+    face.stagePreset('minimal')
+    face.startSession()
+
+    await vi.waitFor(() => {
+      expect(mock.remote.agentPresets.select).toHaveBeenCalledWith(sid('session-reused'), 'minimal')
     })
   }, COLD_BOOT_TIMEOUT_MS)
 })
