@@ -123,6 +123,10 @@
     - id: workspace-controller
       name: '@deepseek-ai/dsh-api-workspace-controller'
 
+    # WorkBro application commands over Typert Remote.
+    - id: app-controller
+      name: '@deepseek-ai/dsh-api-app-controller'
+
     - id: cordis-host-runner
       name: '@deepseek-ai/dsh-cordis-host-runner'
 

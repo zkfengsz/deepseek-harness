@@ -44,6 +44,8 @@
       "@deepseek-ai/dsh-spill-policy/notice": ["./packages/spill/spill-policy/src/notice.ts"],
       "@deepseek-ai/dsh-typert-registry": ["./packages/typert/registry/src/index.ts"],
       "@deepseek-ai/dsh-typert-registry/client": ["./packages/typert/registry/src/client/index.ts"],
+      "@deepseek-ai/dsh-api-app-controller": ["./packages/api/app-controller/src"],
+      "@deepseek-ai/dsh-api-app-controller/types": ["./packages/api/app-controller/src/types.ts"],
       "@deepseek-ai/dsh-api-gateway": ["./packages/api/gateway/src/index.ts"],
       "@deepseek-ai/dsh-api-gateway/client": ["./packages/api/gateway/src/client/index.ts"],
       "@deepseek-ai/dsh-api-gateway/types": ["./packages/api/gateway/src/types.ts"],
