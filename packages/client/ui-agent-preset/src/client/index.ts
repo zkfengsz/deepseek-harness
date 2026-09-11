@@ -43,6 +43,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /** Stage an agent preset for the next blank session (WorkBro app launch). */
+    'workbro/stage-preset'(presetId: string): void
+  }
+}
+
 export type { AgentPresetLabelInjected, AgentPresetLabelProps } from './AgentPresetLabel.tsx'
 export type { AgentPresetSeatInjected, AgentPresetSeatProps } from './AgentPresetSeat.tsx'
 export type { AgentPresetSectionInjected, AgentPresetSectionProps } from './AgentPresetSection.tsx'
@@ -103,6 +110,9 @@ export function apply(ctx: ClientContext): void {
   // render and simply hides the button while no flow exists.
   let creatorDraft: (() => void) | undefined
   let activeSeat: AgentPresetSeatController | undefined
+  ctx.on('workbro/stage-preset', (presetId: string) => {
+    activeSeat?.stage(presetId)
+  })
 
   // The new-session chip and the header label: one controller, because the
   // staged choice belongs to the flow rather than to any one session.

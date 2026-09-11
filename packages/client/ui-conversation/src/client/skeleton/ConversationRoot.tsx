@@ -131,7 +131,7 @@ function WidthHandle(props: {
 export function ConversationRoot({
   sessionId, useSession, useSessions, useSessionPendingInteraction,
   useWorkspaces, useConversation, useInput, useComposerBlock,
-  renderSlot, renderSlotChain, selectWorkspace, t,
+  renderSlot, renderSlotChain, selectWorkspace, stagePreset, t,
 }: ConversationRootProps) {
   const session = useSession(s => s)
   const pendingInteraction = useSessionPendingInteraction(snapshot =>
@@ -349,13 +349,13 @@ export function ConversationRoot({
       {hero && heroWorkspaceRow}
       {hero && renderSlot('conversation.hero.apps', {
         onOpenApp: (app) => {
+          if (app.preset !== undefined) stagePreset(app.preset)
           if (app.workspaceId !== undefined) {
             setPendingWorkspaceId(app.workspaceId)
             void selectWorkspace(app.workspaceId).catch(() => {
               setPendingWorkspaceId(current => current === app.workspaceId ? undefined : current)
             })
           }
-          // TODO(app): stage `app.preset` before the session opens.
         },
         selectedAppId: undefined,
       })}
