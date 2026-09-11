@@ -919,6 +919,9 @@ importers:
       '@deepseek-ai/dsh-agent-presets':
         specifier: workspace:^
         version: link:../../preset/agent-presets
+      '@deepseek-ai/dsh-api-app-controller':
+        specifier: workspace:^
+        version: link:../app-controller
       '@deepseek-ai/dsh-api-gateway':
         specifier: workspace:^
         version: link:../gateway
