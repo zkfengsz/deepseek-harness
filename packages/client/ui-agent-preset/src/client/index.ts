@@ -104,7 +104,10 @@ export function apply(ctx: ClientContext): void {
   let creatorDraft: (() => void) | undefined
   let activeSeat: AgentPresetSeatController | undefined
   ctx.on('workbro/stage-preset', (presetId: string) => {
-    activeSeat?.stage(presetId)
+    // `select` stages AND applies to the blank Session that is already
+    // current; the app launch then reuses that Session instead of producing a
+    // list change, so a stage-only pick would never reach it.
+    void activeSeat?.select(presetId)
   })
 
   // The new-session chip and the header label: one controller, because the
