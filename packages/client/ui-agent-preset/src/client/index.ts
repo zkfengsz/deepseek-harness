@@ -43,13 +43,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-declare module '@deepseek-ai/cordis' {
-  interface Events {
-    /** Stage an agent preset for the next blank session (WorkBro app launch). */
-    'workbro/stage-preset'(presetId: string): void
-  }
-}
-
 export type { AgentPresetLabelInjected, AgentPresetLabelProps } from './AgentPresetLabel.tsx'
 export type { AgentPresetSeatInjected, AgentPresetSeatProps } from './AgentPresetSeat.tsx'
 export type { AgentPresetSectionInjected, AgentPresetSectionProps } from './AgentPresetSection.tsx'

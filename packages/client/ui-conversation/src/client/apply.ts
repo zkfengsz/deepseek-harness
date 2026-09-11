@@ -11,8 +11,12 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-// Type-only: pull the WorkBro stage-preset event declaration (emitted on app launch).
-import type {} from '@deepseek-ai/dsh-client-ui-agent-preset/client'
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /** Stage an agent preset for the next blank session (WorkBro app launch). */
+    'workbro/stage-preset'(presetId: string): void
+  }
+}
 import { UiConversation } from './conversation/assembly.ts'
 import type { ViewTab } from './contract/views.ts'
 import type {

@@ -314,6 +314,7 @@ function mount(
     renderSlot,
     renderSlotChain,
     selectWorkspace: retargetWorkspace,
+    stagePreset: vi.fn(),
     t,
   }
   const view = render(<ConversationRoot {...props} />)
