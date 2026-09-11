@@ -21,9 +21,10 @@ function snapshot(items: readonly AppView[]): AppSnapshot {
 
 function bench(items: readonly AppView[] = apps) {
   const onOpenApp = vi.fn()
+  const createApp = vi.fn(async () => undefined)
   const useApps: SnapshotSelectorHook<AppSnapshot> = sel => sel(snapshot(items))
-  const props = { useApps, onOpenApp, selectedAppId: undefined, t } as HomePortalProps
-  return { props, onOpenApp }
+  const props = { useApps, onOpenApp, selectedAppId: undefined, createApp, t } as HomePortalProps
+  return { props, onOpenApp, createApp }
 }
 
 describe('HomePortal', () => {
@@ -50,6 +51,18 @@ describe('HomePortal', () => {
     render(<HomePortal {...bench().props} />)
     expect(screen.getByText('🛡️')).toBeTruthy()
     expect(screen.getByText('compliance')).toBeTruthy()
+  })
+
+  it('creates an app from the inline form', async () => {
+    const { props, createApp } = bench([])
+    render(<HomePortal {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: '新建应用' }))
+    fireEvent.change(screen.getByPlaceholderText('应用名称'), { target: { value: '拓客' } })
+    fireEvent.change(screen.getByPlaceholderText('预设（可选）'), { target: { value: 'growth' } })
+    fireEvent.click(screen.getByRole('button', { name: '创建' }))
+    await vi.waitFor(() => {
+      expect(createApp).toHaveBeenCalledWith({ name: '拓客', preset: 'growth' })
+    })
   })
 
   it('renders the empty placeholder when no app exists', () => {

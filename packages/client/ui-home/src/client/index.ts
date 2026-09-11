@@ -41,7 +41,10 @@ export function apply(ctx: Context): void {
     {
       name: 'conversation.hero.apps',
       locale: NS,
-      inject: () => ({ hooks: { apps: ctx.apps.list } }),
+      inject: () => ({
+        hooks: { apps: ctx.apps.list },
+        createApp: (input: { name: string; preset?: string }) => ctx.apps.create(input),
+      }),
     },
     HomePortal,
   ))

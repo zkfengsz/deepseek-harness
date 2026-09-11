@@ -1,8 +1,10 @@
 /**
- * WorkBro application portal: one card per WorkBro app, opening it on click.
- * Read-only presentation over a registrant-private useApps hook; launching
- * stays in the owner's onOpenApp callback.
+ * WorkBro application portal: one card per WorkBro app, opening it on click,
+ * plus an inline create form. Read-only presentation over a registrant-private
+ * useApps hook; launching stays in the owner's onOpenApp callback and creation
+ * goes through the injected createApp action.
  */
+import { useState } from 'react'
 import clsx from 'clsx'
 import type { PropsHooks, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AppSource } from '@deepseek-ai/dsh-api-app-controller/client'
@@ -10,26 +12,64 @@ import type { AppSource } from '@deepseek-ai/dsh-api-app-controller/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import css from './HomePortal.module.css'
 
-/** Inject face of the portal: the private app snapshot source. */
+/** Inject face of the portal: the private app snapshot source and create action. */
 export interface HomePortalInjected {
   hooks: { apps: AppSource }
+  createApp(input: { name: string; preset?: string }): Promise<unknown>
 }
 
 /** Full props of the WorkBro application portal. */
 export type HomePortalProps =
   PropsRuntime<'conversation.hero.apps'>
+  & Omit<HomePortalInjected, 'hooks'>
   & PropsHooks<HomePortalInjected['hooks']>
   & PropsLocale<'home'>
 
 /**
- * Render the portal: a card per app, or a placeholder when none exist.
- * @param props - owner onOpenApp/selectedAppId, the useApps selector, and t.
+ * Render the portal: a card per app (or a placeholder), with an inline create
+ * form toggled by the new-app action.
+ * @param props - owner onOpenApp/selectedAppId, useApps selector, createApp, and t.
  * @returns the portal section element.
  */
-export function HomePortal({ useApps, onOpenApp, selectedAppId, t }: HomePortalProps) {
+export function HomePortal({ useApps, onOpenApp, selectedAppId, createApp, t }: HomePortalProps) {
   const apps = useApps(snapshot => snapshot.apps)
+  const [creating, setCreating] = useState(false)
+  const [name, setName] = useState('')
+  const [preset, setPreset] = useState('')
+
+  const submit = () => {
+    const trimmed = name.trim()
+    if (trimmed === '') return
+    const presetValue = preset.trim()
+    void createApp(presetValue === '' ? { name: trimmed } : { name: trimmed, preset: presetValue }).then(() => {
+      setName('')
+      setPreset('')
+      setCreating(false)
+    })
+  }
+
   return (
     <section className={css.root} aria-label={t('portal.title')}>
+      {creating
+        ? (
+          <div className={css.form}>
+            <input
+              className={css.input}
+              value={name}
+              onChange={(event) => { setName(event.target.value) }}
+              placeholder={t('portal.name.placeholder')}
+            />
+            <input
+              className={css.input}
+              value={preset}
+              onChange={(event) => { setPreset(event.target.value) }}
+              placeholder={t('portal.preset.placeholder')}
+            />
+            <button type="button" className={css.action} onClick={submit}>{t('portal.create.action')}</button>
+            <button type="button" className={css.action} onClick={() => { setCreating(false) }}>{t('portal.cancel')}</button>
+          </div>
+        )
+        : <button type="button" className={css.action} onClick={() => { setCreating(true) }}>{t('portal.create')}</button>}
       {apps.length === 0
         ? <p className={css.empty}>{t('portal.empty')}</p>
         : (
