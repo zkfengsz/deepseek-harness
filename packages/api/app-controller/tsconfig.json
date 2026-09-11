@@ -1,24 +1,8 @@
 {
   "extends": "../../../tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "lib/types"
-  },
-  "include": [
-    "src"
-  ],
+  "files": [],
   "references": [
-    {
-      "path": "../../../vendor/cordis"
-    },
-    {
-      "path": "../../app/app-registry"
-    },
-    {
-      "path": "../../typert/protocol"
-    },
-    {
-      "path": "../../workspace/workspace"
-    }
+    { "path": "./tsconfig.host.json" },
+    { "path": "./tsconfig.client.json" }
   ]
 }
