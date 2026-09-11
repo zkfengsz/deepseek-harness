@@ -259,6 +259,10 @@
     - id: ui-brand-official
       name: '@deepseek-ai/dsh-client-ui-brand-official'
 
+    # WorkBro occupants for the generic brand slots (replaces the official brand).
+    - id: ui-brand-workbro
+      name: '@deepseek-ai/dsh-client-ui-brand-workbro'
+
     - id: ui-attachment
       name: '@deepseek-ai/dsh-client-ui-attachment'
 

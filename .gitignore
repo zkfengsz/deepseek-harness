@@ -9,6 +9,9 @@ pnpm-debug.log
 .xdg/
 .npm-cache/
 .bin/
+.workbro-dsh-home/
+.workbro-cookies.txt
+.workbro-web.log
 examples/*/*.jsonl
 .storages/
 .sessions/
