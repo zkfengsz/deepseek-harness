@@ -103,11 +103,11 @@ export function apply(ctx: ClientContext): void {
   // render and simply hides the button while no flow exists.
   let creatorDraft: (() => void) | undefined
   let activeSeat: AgentPresetSeatController | undefined
-  ctx.on('workbro/stage-preset', (presetId: string) => {
-    // `select` stages AND applies to the blank Session that is already
-    // current; the app launch then reuses that Session instead of producing a
-    // list change, so a stage-only pick would never reach it.
-    void activeSeat?.select(presetId)
+  // Cross-plugin bridge for the WorkBro app portal: a client event only
+  // trickles DOWN from its emitting context, so a sibling plugin never sees
+  // one raised on another plugin's scope. A service is the reliable channel.
+  ctx.provide('workbroPresetLaunch', {
+    select: (presetId: string) => { void activeSeat?.select(presetId) },
   })
 
   // The new-session chip and the header label: one controller, because the

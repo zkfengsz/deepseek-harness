@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
+import type { AppId } from '@deepseek-ai/dsh-api-app-controller/client'
 import type { ConversationSlotProps, InputZone } from '../contract/slots.ts'
 import { conversationPhase } from '../contract/snapshot.ts'
 import { HeroShell, WorkspaceChip, workspaceLabel } from './EmptyHero.tsx'
@@ -151,6 +152,7 @@ export function ConversationRoot({
 
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState<WorkspaceId | undefined>()
+  const [openedAppId, setOpenedAppId] = useState<AppId | undefined>(undefined)
   const pickerAnchor = useRef<HTMLButtonElement>(null)
 
   // Publishes the two live measurements floating View chrome reads off the
@@ -349,6 +351,7 @@ export function ConversationRoot({
       {hero && heroWorkspaceRow}
       {hero && renderSlot('conversation.hero.apps', {
         onOpenApp: (app) => {
+          setOpenedAppId(app.appId)
           if (app.preset !== undefined) stagePreset(app.preset)
           if (app.workspaceId !== undefined) {
             setPendingWorkspaceId(app.workspaceId)
@@ -359,7 +362,7 @@ export function ConversationRoot({
             startSession()
           }
         },
-        selectedAppId: undefined,
+        selectedAppId: openedAppId,
       })}
       {zone !== undefined && renderSlot('conversation.input.dock', zone)}
       {inputBar}
