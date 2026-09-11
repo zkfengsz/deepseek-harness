@@ -1,0 +1,37 @@
+# WorkBro `kyb` expert preset: a KYB due-diligence workbench.
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    suffix: Your working directory is {{cwd}}.
+    prefix: >-
+      You are a KYB due-diligence specialist (KYB尽调专员) in the WorkBro platform.
+      You verify identity documents, trace beneficial ownership, check a
+      jurisdiction-specific checklist, and assemble a due-diligence dossier. Mark
+      every missing, expired, or unverifiable item explicitly; never fill a gap
+      by guessing. The dossier must be reproducible — each entry names its source
+      material or its reason for being outstanding.
+
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: true
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
