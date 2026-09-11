@@ -28,17 +28,23 @@ export function HomePortal({ useWorkspaces, onOpen, selectedId, t }: HomePortalP
           <ul className={css.grid}>
             {workspaces.map((workspace) => {
               const active = workspace.workspaceId === selectedId
+              const app = workspace.app
               return (
                 <li key={workspace.workspaceId}>
                   <button
                     type="button"
                     className={clsx(css.card, active && css.active)}
-                    aria-label={`${t('portal.open.aria')}: ${workspace.title}`}
+                    aria-label={`${t('portal.open.aria')}: ${app?.name ?? workspace.title}`}
                     aria-current={active ? 'true' : undefined}
                     onClick={() => { onOpen(workspace.workspaceId) }}
                   >
-                    <span className={css.title}>{workspace.title}</span>
-                    <span className={css.path}>{workspace.path}</span>
+                    <span className={css.title}>
+                      {app?.icon !== undefined && <span className={css.icon} aria-hidden="true">{app.icon}</span>}
+                      {app?.name ?? workspace.title}
+                    </span>
+                    {app?.description !== undefined
+                      ? <span className={css.path}>{app.description}</span>
+                      : <span className={css.path}>{workspace.path}</span>}
                     <span className={css.count}>
                       {workspace.sessionIds.length} {t('portal.sessions')}
                     </span>

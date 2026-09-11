@@ -37,6 +37,10 @@
   color: var(--dsw-alias-label-primary);
 }
 
+.icon {
+  margin-right: 6px;
+}
+
 .path {
   font-size: 12px;
   color: var(--dsw-alias-label-secondary);

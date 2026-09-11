@@ -11,6 +11,18 @@ import type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 export type { WorkspaceId } from '@deepseek-ai/dsh-workspace/types'
 export type { DirectoryEntry, DirectoryListing } from '@deepseek-ai/dsh-host-directory-picker/types'
 
+/** Application metadata read from a Workspace's `workbro.app.yml`. */
+export interface WorkbroAppManifest {
+  /** Override display name; falls back to the Workspace title. */
+  readonly name?: string | undefined
+  /** Single emoji or short glyph shown on the portal card. */
+  readonly icon?: string | undefined
+  /** One-line description. */
+  readonly description?: string | undefined
+  /** Agent preset to stage when opening the app. */
+  readonly preset?: string | undefined
+}
+
 /** One durable Workspace projected for browser consumers. */
 export interface WorkspaceView {
   readonly workspaceId: WorkspaceId
@@ -24,6 +36,8 @@ export interface WorkspaceView {
   readonly createdAt: string
   /** ISO-8601 last-mutation instant. */
   readonly updatedAt: string
+  /** Application metadata, when the Workspace ships a `workbro.app.yml`. */
+  readonly app?: WorkbroAppManifest | undefined
 }
 
 declare module '@deepseek-ai/dsh-typert-protocol' {

@@ -14,6 +14,7 @@ import type {
   WorkspaceFollowFrame,
   WorkspaceView,
 } from './types.ts'
+import { readAppManifest } from './manifest.ts'
 
 /**
  * Project one authoritative Workspace entity into its Remote value.
@@ -68,8 +69,10 @@ export class WorkspaceFeed {
    * @returns all active Workspaces and archived Session identities.
    */
   baseline(): WorkspaceBaseline {
+    const workspaces = this.ctx.workspaceRegistry.list()
+    for (const workspace of workspaces) this.enrichApp(workspace)
     return {
-      items: this.ctx.workspaceRegistry.list().map(workspaceView),
+      items: workspaces.map(workspaceView),
       archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds],
     }
   }
@@ -107,6 +110,7 @@ export class WorkspaceFeed {
         }
         this.knownIds.add(id)
         this.publish({ type: 'upsert', workspace: workspaceView(workspace) })
+        this.enrichApp(workspace)
       }
       this.order = nextOrder
       if (orderChanged) this.publish({ type: 'order', workspaceIds: [...state.workspaceIds] })
@@ -132,6 +136,18 @@ export class WorkspaceFeed {
 
   private publish(frame: Exclude<WorkspaceFollowFrame, { readonly type: 'baseline' }>): void {
     for (const follower of this.followers) follower.push(frame)
+  }
+
+  /**
+   * Asynchronously attach a Workspace's application manifest and republish its
+   * view. Fire-and-forget: closed followers drop the late frame.
+   * @param workspace - authoritative registry entity to enrich.
+   */
+  private enrichApp(workspace: Workspace): void {
+    void readAppManifest(workspace.path).then((app) => {
+      if (app === undefined) return
+      this.publish({ type: 'upsert', workspace: { ...workspaceView(workspace), app } })
+    })
   }
 }
 

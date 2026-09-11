@@ -67,4 +67,12 @@ describe('HomePortal', () => {
     render(<HomePortal {...bench([]).props} />)
     expect(screen.getByText('暂无应用')).toBeTruthy()
   })
+
+  it('renders the app icon, name, and description when a manifest exists', () => {
+    const withApp = [{ ...workspaces[0]!, app: { name: '合规巡检台', icon: '🛡️', description: '批量制裁筛查' } }]
+    render(<HomePortal {...bench(withApp).props} />)
+    expect(screen.getByText('🛡️')).toBeTruthy()
+    expect(screen.getByText('合规巡检台')).toBeTruthy()
+    expect(screen.getByText('批量制裁筛查')).toBeTruthy()
+  })
 })
