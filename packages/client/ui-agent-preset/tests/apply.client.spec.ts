@@ -518,6 +518,48 @@ describe('ui-agent-preset apply', () => {
     await vi.waitFor(() => { expect(calls).toContain('select:minimal') })
   })
 
+  it('launches the app preset onto the session the portal starts', async () => {
+    const { ctx, slots, calls } = await bench()
+    declareRoot(slots)
+    declareConversation(slots)
+    ctx.provide('conversation', {} as never)
+    const state: {
+      current?: string
+      byId: Record<string, {
+        id: string
+        blank: boolean
+        projectionValues?: { agentPreset?: string | null }
+      }>
+    } = {
+      current: 'running',
+      byId: {
+        running: { id: 'running', blank: false, projectionValues: { agentPreset: 'standard' } },
+      },
+    }
+    const sessions = sessionsDouble(state)
+    ctx.provide('sessions', sessions as never)
+    ctx.provide('uiWorkspace', uiWorkspaceDouble() as never)
+    await ctx.plugin({ inject: [...inject, 'conversation', 'sessions', 'uiWorkspace'], apply }).await()
+
+    // The portal reaches the seat through the cross-plugin service: a client
+    // event cannot, because it only trickles down from its emitting context.
+    ctx.get('workbroPresetLaunch')!.launch('minimal')
+    expect(calls).not.toContain('select:minimal')
+
+    // Starting the launched session publishes it while the running one is
+    // still current, which is where a stage that is not held is spent.
+    state.byId['s1'] = {
+      id: 's1', blank: true, projectionValues: { agentPreset: 'standard' },
+    }
+    sessions.notify()
+    expect(calls).not.toContain('select:minimal')
+
+    state.current = 's1'
+    sessions.notify()
+
+    await vi.waitFor(() => { expect(calls).toContain('select:minimal') })
+  })
+
   it('applies the stage to a session that records no preset of its own', async () => {
     const { ctx, slots, calls } = await bench()
     declareRoot(slots)
@@ -730,6 +772,81 @@ describe('AgentPresetSeatController reconciliation', () => {
     expect(controller.store.getSnapshot()).toMatchObject({
       busy: false, current: '', error: 'selection rejected',
     })
+  })
+
+  it('holds a launched pick across the running Session it is not addressed to', async () => {
+    const select = vi.fn(() => Promise.resolve({ ok: true as const, value: 'minimal' }))
+    let current = {
+      id: SessionId('running'), blank: false, projectionValues: { agentPreset: 'standard' },
+    }
+    const controller = new AgentPresetSeatController({
+      remote: { agentPresets: { select } },
+    } as never, () => current)
+
+    // A launching surface stages before it starts the Session it lands on.
+    controller.launch('minimal')
+    await controller.apply()
+
+    // Starting that Session publishes its summary while the running one is
+    // still current; a stage spent here would never reach the new Session.
+    expect(select).not.toHaveBeenCalled()
+
+    current = {
+      id: SessionId('launched'), blank: true, projectionValues: { agentPreset: 'standard' },
+    }
+    await controller.apply()
+
+    expect(select).toHaveBeenCalledWith(SessionId('launched'), 'minimal')
+    expect(controller.store.getSnapshot()).toMatchObject({ current: 'minimal', busy: false })
+  })
+
+  it('spends a launched pick on the Session that took it', async () => {
+    const select = vi.fn(() => Promise.resolve({ ok: true as const, value: 'minimal' }))
+    let current = {
+      id: SessionId('launched'), blank: true, projectionValues: { agentPreset: 'standard' },
+    }
+    const controller = new AgentPresetSeatController({
+      remote: { agentPresets: { select } },
+    } as never, () => current)
+
+    controller.launch('minimal')
+    await controller.apply()
+    current = {
+      id: SessionId('later'), blank: false, projectionValues: { agentPreset: 'standard' },
+    }
+    await controller.apply()
+
+    // The hold lasts for the launched Session alone: a later running Session
+    // must not be handed a pick that was already spent.
+    expect(select).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops a held launch when the deployment disables mode selection', async () => {
+    let roster = ROSTER_ONE
+    const select = vi.fn(() => Promise.resolve({ ok: true as const, value: 'minimal' }))
+    let current = {
+      id: SessionId('running'), blank: false, projectionValues: { agentPreset: 'standard' },
+    }
+    const controller = new AgentPresetSeatController({
+      remote: {
+        agentPresets: {
+          select,
+          list: () => Promise.resolve(roster),
+        },
+      },
+    } as never, () => current)
+
+    controller.launch('minimal')
+    roster = ROSTER_HIDDEN
+    await controller.load()
+
+    current = {
+      id: SessionId('launched'), blank: true, projectionValues: { agentPreset: 'standard' },
+    }
+    await controller.apply()
+
+    // A deployment that no longer offers the choice cannot honour the pick.
+    expect(select).not.toHaveBeenCalled()
   })
 
   it('keeps the bare cause of a mount failure, not the frame that names the preset again', async () => {

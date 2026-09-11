@@ -56,6 +56,12 @@ export class AgentPresetSeatController {
   /** Set while a pick is waiting for a session; cleared once applied. */
   private staged: string | undefined
 
+  /**
+   * Set while the stage belongs to a session that does not exist yet, so a
+   * running one still on screen holds it rather than spending it.
+   */
+  private pending = false
+
   /** Only the newest roster read may publish after overlapping refreshes. */
   private loadGeneration = 0
 
@@ -85,7 +91,10 @@ export class AgentPresetSeatController {
       return
     }
     const { presets, modeSelectionEnabled } = roster.value
-    if (!modeSelectionEnabled) this.staged = undefined
+    if (!modeSelectionEnabled) {
+      this.staged = undefined
+      this.pending = false
+    }
     this.fallback = presets.find(preset => preset.isDefault)?.id ?? presets[0]?.id ?? ''
     const session = this.currentSession()
     this.set({
@@ -135,7 +144,24 @@ export class AgentPresetSeatController {
    */
   stage(id: string, introduce = false): void {
     this.staged = id
+    this.pending = false
     this.set({ current: id, error: null, introduce })
+  }
+
+  /**
+   * Stage a pick that belongs to the session a launching surface is about to
+   * produce, holding it while the session it is for does not exist yet.
+   *
+   * `stage()` alone cannot carry this: starting a session publishes the new
+   * summary while the previous one is still current, and the applier spends a
+   * stage the moment a running session is current. The pick here is not for
+   * that session, so it is held until one can take it.
+   * @param id - the preset the launched session should run.
+   */
+  launch(id: string): void {
+    this.staged = id
+    this.pending = true
+    this.set({ current: id, error: null, introduce: true })
   }
 
   /**
@@ -190,12 +216,17 @@ export class AgentPresetSeatController {
     // A started session's history was produced under its own composition; the
     // host refuses the swap, so the stage is no longer meaningful.
     if (!session.blank || presetOf(session) === staged) {
+      // The running session is not the pick's addressee when a launch staged
+      // it: it is only still current while the pick's own session is created.
+      if (!session.blank && this.pending) return
       this.staged = undefined
+      this.pending = false
       return
     }
     this.set({ busy: true, error: null })
     const result = await this.ctx.remote.agentPresets.select(session.id, staged)
     this.staged = undefined
+    this.pending = false
     if (!result.ok) {
       const { error } = result
       this.set({

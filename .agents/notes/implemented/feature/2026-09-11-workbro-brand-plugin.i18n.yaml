@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-11-workbro-brand-plugin.md
-2026-09-11-workbro-brand-plugin.md: 065fece6f7692c9611ccdc0e78ef435b734ec488
-2026-09-11-workbro-brand-plugin.zh.md: bf856d9524799d7c9b6f19b90d030eac9705f681
+2026-09-11-workbro-brand-plugin.md: a67f576488001ac136547b8196c1282d5d468eec
+2026-09-11-workbro-brand-plugin.zh.md: 9043bee1a58ef7490f4e46f2e98c0d47c3ed9ded

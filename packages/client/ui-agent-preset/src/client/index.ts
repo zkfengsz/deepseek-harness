@@ -106,8 +106,11 @@ export function apply(ctx: ClientContext): void {
   // Cross-plugin bridge for the WorkBro app portal: a client event only
   // trickles DOWN from its emitting context, so a sibling plugin never sees
   // one raised on another plugin's scope. A service is the reliable channel.
+  // `launch`, not `select`: the portal stages the app's preset and then starts
+  // the session it lands on, so the pick has to outlive the session still
+  // current while that one is created.
   ctx.provide('workbroPresetLaunch', {
-    select: (presetId: string) => { void activeSeat?.select(presetId) },
+    launch: (presetId: string) => { activeSeat?.launch(presetId) },
   })
 
   // The new-session chip and the header label: one controller, because the

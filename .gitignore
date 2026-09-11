@@ -12,6 +12,10 @@ pnpm-debug.log
 .workbro-dsh-home/
 .workbro-cookies.txt
 .workbro-web.log
+.build.log
+.build-lib.log
+.lint.log
+.gui-run.log
 examples/*/*.jsonl
 .storages/
 .sessions/

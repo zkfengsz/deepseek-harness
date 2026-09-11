@@ -13,8 +13,12 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    /** Cross-plugin handle for staging a preset from outside the preset surface. */
-    workbroPresetLaunch: { select(presetId: string): void }
+    /**
+     * Cross-plugin handle for launching a session under a preset chosen
+     * outside the preset surface. The pick is held until the session the
+     * launcher starts is current.
+     */
+    workbroPresetLaunch: { launch(presetId: string): void }
   }
 }
 import { UiConversation } from './conversation/assembly.ts'
@@ -264,7 +268,7 @@ export function apply(ctx: Context, config: Config = Config({})): void {
       hooks: {
         composerBlock: sessionId === undefined ? ABSENT_BLOCK : composerBlocks.storeFor(sessionId),
       },
-      stagePreset: (presetId) => { ctx.get('workbroPresetLaunch')?.select(presetId) },
+      stagePreset: (presetId) => { ctx.get('workbroPresetLaunch')?.launch(presetId) },
       startSession: (workspaceId) => { workspaceNavigation.startSession(workspaceId) },
       selectWorkspace: workspaceId => workspaceNavigation.openWorkspace(workspaceId, (nextId) => {
         if (sessionId !== undefined && nextId !== sessionId) {

@@ -1,7 +1,6 @@
 /** Host WorkBro application Remote owner: explicit commands over the app registry. */
 import { Context } from '@deepseek-ai/cordis'
 import type { App } from '@deepseek-ai/dsh-app-registry'
-import { AppId } from '@deepseek-ai/dsh-app-registry'
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type {
   AppBindWorkspaceRequest,
@@ -10,6 +9,7 @@ import type {
   AppCreateValue,
   AppDeleteRequest,
   AppDeleteValue,
+  AppId,
   AppInsertBeforeRequest,
   AppInsertBeforeValue,
   AppListValue,
@@ -48,8 +48,8 @@ export class AppController extends TypertRemoteService {
 
   /** The complete durable app list in registry order. */
   @Remote('list')
-  async list(): Promise<AppListValue> {
-    return { apps: this.ctx.appRegistry.list().map(appView) }
+  list(): Promise<AppListValue> {
+    return Promise.resolve({ apps: this.ctx.appRegistry.list().map(appView) })
   }
 
   /** Create one app and prepend it to the durable order. */
@@ -68,14 +68,14 @@ export class AppController extends TypertRemoteService {
   /** Bind or unbind a workspace as the app's data context. */
   @Remote('bindWorkspace')
   async bindWorkspace(request: AppBindWorkspaceRequest): Promise<AppBindWorkspaceValue> {
-    const app = await this.ctx.appRegistry.bindWorkspace(AppId(request.appId), request.workspaceId)
+    const app = await this.ctx.appRegistry.bindWorkspace(request.appId, request.workspaceId)
     return { app: appView(app) }
   }
 
   /** Delete one app registration. */
   @Remote('delete')
   async delete(request: AppDeleteRequest): Promise<AppDeleteValue> {
-    if (!await this.ctx.appRegistry.delete(AppId(request.appId))) {
+    if (!await this.ctx.appRegistry.delete(request.appId)) {
       throw appNotFound(request.appId)
     }
     return { deleted: true }
@@ -86,8 +86,8 @@ export class AppController extends TypertRemoteService {
   async insertBefore(request: AppInsertBeforeRequest): Promise<AppInsertBeforeValue> {
     try {
       const appIds = await this.ctx.appRegistry.insertBefore(
-        AppId(request.appId),
-        request.beforeAppId === undefined ? undefined : AppId(request.beforeAppId),
+        request.appId,
+        request.beforeAppId,
       )
       return { appIds: [...appIds] }
     } catch (error) {
@@ -96,9 +96,9 @@ export class AppController extends TypertRemoteService {
     }
   }
 
-  private async renameOrFail(appId: string, name: string): Promise<App> {
+  private async renameOrFail(appId: AppId, name: string): Promise<App> {
     try {
-      return await this.ctx.appRegistry.rename(AppId(appId), name)
+      return await this.ctx.appRegistry.rename(appId, name)
     } catch (error) {
       if (!(error instanceof Error) || !error.message.startsWith('unknown app')) throw error
       throw appNotFound(appId)
@@ -106,8 +106,8 @@ export class AppController extends TypertRemoteService {
   }
 }
 
-function appNotFound(appId: string): RemoteError<'app/not-found'> {
-  return new RemoteError('app/not-found', `App "${appId}" not found`, { appId: AppId(appId) })
+function appNotFound(appId: AppId): RemoteError<'app/not-found'> {
+  return new RemoteError('app/not-found', `App "${appId}" not found`, { appId })
 }
 
 export default AppController

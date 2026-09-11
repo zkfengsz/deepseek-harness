@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-11-workbro-home-portal.md
-2026-09-11-workbro-home-portal.md: 5264cde3bf0429bc2816d4a30e0d4fa34fe9c422
-2026-09-11-workbro-home-portal.zh.md: 7655b35f7692c2ebb778cffe985c4da4465427f8
+2026-09-11-workbro-home-portal.md: 5eae3c10cb7652c95373930df541583f0d09ea0f
+2026-09-11-workbro-home-portal.zh.md: 70ba041475c069adfa89850bf2fa850c9ce72d1a

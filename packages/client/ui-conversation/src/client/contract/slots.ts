@@ -274,7 +274,11 @@ export interface ConversationInjected {
   selectWorkspace: (workspaceId: WorkspaceId) => Promise<void>
   /** Start a New Session in the optional Workspace (WorkBro app launch). */
   startSession: (workspaceId?: WorkspaceId) => void
-  /** Stage an agent preset for the next blank Session (WorkBro app launch). */
+  /**
+   * Hand an app's preset to the session this launch lands on. Called before
+   * the launch starts that session, because the pick is held until a blank
+   * session can take it.
+   */
   stagePreset: (presetId: string) => void
   /** Session-addressed composer block source, or the stable absent source. */
   hooks: { composerBlock: ObservableSnapshot<ComposerBlock | undefined> }
