@@ -43,8 +43,8 @@ describe('McpController', () => {
 
     const listed = (await controller.list()).servers
     expect(listed).toHaveLength(1)
-    expect(listed[0].id).toBe(created.server.id)
-    expect(['starting', 'connected', 'failed', 'disabled']).toContain(listed[0].status)
+    expect(listed[0]).toMatchObject({ id: created.server.id })
+    expect(['starting', 'connected', 'failed', 'disabled']).toContain(listed[0]?.status)
   })
 
   it('refuses a stdio request without a command and an http request without a url', async () => {

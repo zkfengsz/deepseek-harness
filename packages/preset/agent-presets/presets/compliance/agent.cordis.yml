@@ -30,6 +30,9 @@
 - id: skill-filesystem
   name: '@deepseek-ai/dsh-skill-filesystem'
 
+- id: workbro-skills
+  name: '@deepseek-ai/dsh-skill-workbro'
+
 - id: tool-skill
   name: '@deepseek-ai/dsh-tool-skill'
 

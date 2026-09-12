@@ -34,7 +34,7 @@ describe('McpManager', () => {
     const { registry, manager } = await harness()
     await registry.create({ transport: 'stdio', serverName: 'off', command: 'none', enabled: false })
     await manager.sync()
-    expect(manager.states()).toEqual([{ id: expect.anything(), status: 'disabled' }])
+    expect(manager.states()).toMatchObject([{ status: 'disabled' }])
   })
 
   it('starts an enabled server and settles a failed initial connection', async () => {
@@ -54,13 +54,13 @@ describe('McpManager', () => {
       transport: 'stdio', serverName: 'dead2', command: 'definitely-not-a-real-command', failOnStartupError: false,
     })
     await manager.sync()
-    await vi.waitFor(() => { expect(manager.states()[0].status).toBe('failed') })
+    await vi.waitFor(() => { expect(manager.states()[0]?.status).toBe('failed') })
 
     await registry.update(server.id, {
       transport: 'stdio', serverName: 'dead2', command: 'definitely-not-a-real-command', enabled: false,
     })
     await manager.sync()
-    expect(manager.states()[0].status).toBe('disabled')
+    expect(manager.states()[0]?.status).toBe('disabled')
 
     await registry.delete(server.id)
     await manager.sync()

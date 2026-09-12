@@ -63,6 +63,8 @@ kind: "package-reference"
 
 ## 已知限制与延期工作
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - **除 `enabled` 外没有独立的启停开关**——启用/禁用都走 `update`，调用方需重发完整请求而不是一个专用开关。
 
 <a id="dev-note"></a>

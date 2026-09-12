@@ -362,6 +362,11 @@
     - id: ui-agent-preset
       name: '@deepseek-ai/dsh-client-ui-agent-preset'
 
+    # MCP servers: the Settings section where users add, edit, and delete
+    # user-added MCP servers over the shared mcpServers client service.
+    - id: ui-mcp-servers
+      name: '@deepseek-ai/dsh-client-ui-mcp-servers'
+
     # Plugin configuration: the host-plane sections a user owns, as expandable
     # cards. A namespace this deployment does not expose renders nothing.
     - id: ui-settings-plugins

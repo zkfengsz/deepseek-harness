@@ -49,6 +49,17 @@ function clientConfigOf(server: McpServer): McpClientConfig {
   }
 }
 
+/** Stringify a thrown connection error without the Object default form. */
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return 'unknown error'
+  }
+}
+
 interface LiveEntry {
   readonly handle: ConnectionHandle
   status: McpServerStatus['status']
@@ -117,7 +128,7 @@ export class McpManager extends Service {
           current.error = undefined
         } else {
           current.status = 'failed'
-          current.error = outcome.error instanceof Error ? outcome.error.message : String(outcome.error)
+          current.error = errorMessage(outcome.error)
         }
       })
     }

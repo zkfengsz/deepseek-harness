@@ -62,6 +62,8 @@ kind: "package-reference"
 
 ## 已知限制与延期工作
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - **状态是粗粒度的**——`states()` 只反映首次连接结果；之后的重连掉线要到下一次对齐才会呈现。
 
 <a id="dev-note"></a>

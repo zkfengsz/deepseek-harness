@@ -62,6 +62,8 @@ kind: "package-reference"
 
 ## 已知限制与延期工作
 
+<a id="known-limitations-and-deferred-work"></a>
+
 - **没有按用户归属**——记录是部署级的；按用户划分的 MCP 列表需要先有租户原语。
 
 <a id="dev-note"></a>
