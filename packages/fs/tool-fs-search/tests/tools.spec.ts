@@ -10,15 +10,22 @@
  * Real-`rg` behavior is pinned separately in integration.spec.ts.
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createScope, type Scope } from '@deepseek-ai/dsh-scope'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED_BEFORE_DISPATCH, type ToolExecution, type ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import type { SubprocessCollectedOutputs, SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessOutputReader, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
+import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
+import { SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import ApprovalService from '@deepseek-ai/dsh-user-approval'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { rgPath } from '@vscode/ripgrep'
 import { SpillLocator, SpillStore } from '@deepseek-ai/dsh-spill'
@@ -1264,3 +1271,198 @@ describe('scope-aware search guidance', () => {
 function withPersona(...sections: string[]): string {
   return ['You are an AI agent powered by DeepSeek Harness.', ...sections].join('\n\n')
 }
+
+/** A calling agent whose session carries the log surface `ctx.sandboxPolicy.resolve` folds. */
+function boundaryAgent(cwd: string): object {
+  const id = SessionId('sess-search-boundary')
+  const events = [{ type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } }]
+  return {
+    session: {
+      id,
+      header: { version: 0, id, createdAt: 0, cwd, isSeeded: false },
+      inheritedEventCount: SessionLogOffset(0),
+      firstLiveSeq: SessionLogOffset(0),
+      seq: SessionLogOffset(events.length),
+      eventAt: (seq: number) => events[seq],
+      snapshotEvents: (from = 0, to = events.length) => events.slice(from, to),
+      append: () => undefined,
+    },
+  }
+}
+
+describe('the session read boundary', () => {
+  let base: string
+  let workspace: string
+  let outside: string
+
+  beforeAll(async () => {
+    base = await mkdtemp(join(tmpdir(), 'dsh-search-boundary-'))
+    workspace = join(base, 'ws')
+    outside = join(base, 'out')
+    await mkdir(workspace)
+    await mkdir(outside)
+  })
+  afterAll(async () => {
+    await rm(base, { recursive: true, force: true })
+  })
+
+  /**
+   * The confined composition: a deployment whose session reads stop at a data
+   * boundary, a real filesystem supplying the containment test, and the fake
+   * subprocess so a refusal is observable as "nothing spawned".
+   */
+  async function setupBoundary(opts: { approval?: boolean; fs?: boolean } = {}) {
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(FakeSubprocess)
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: workspace, confineReads: true })
+    if (opts.fs !== false) await ctx.plugin(LocalFileSystem, { cwd: workspace })
+    if (opts.approval === true) await ctx.plugin(ApprovalService)
+    await ctx.plugin(ToolFsSearch, DEFAULT_CONFIG)
+    return { ctx, subprocess: ctx.subprocess as FakeSubprocess }
+  }
+
+  function searchSchema(ctx: Context, name: 'glob' | 'grep') {
+    const schema = ctx.tools.schemas().find(s => s.name === name)
+    if (!schema) throw new Error(`${name} tool not registered`)
+    return schema as unknown as { parameters: { properties: Record<string, { enum?: string[] }> } }
+  }
+
+  it('advertises the read widening on both tools only while the deployment confines reads', async () => {
+    const open = await setup()
+    for (const name of ['glob', 'grep'] as const) {
+      expect(searchSchema(open.ctx, name).parameters.properties['sandbox_permissions']).toBeUndefined()
+    }
+    const confined = await setupBoundary()
+    for (const name of ['glob', 'grep'] as const) {
+      const properties = searchSchema(confined.ctx, name).parameters.properties
+      expect(properties['sandbox_permissions']?.enum).toEqual(['read-anywhere'])
+      expect(properties['justification']).toBeDefined()
+    }
+  })
+
+  it('denies a glob rooted outside the boundary, spawning nothing', async () => {
+    const { ctx, subprocess } = await setupBoundary()
+    const result = await call(ctx, 'glob', { pattern: '**/*.ts', path: outside }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(true)
+    expect(result.error).toMatchObject({ info: { name: 'SearchError', code: 'SEARCH_DENIED' } })
+    expect(text(result)).toContain("[sandbox: file read denied outside this session's data boundary]")
+    expect(text(result)).toContain('retry this exact read once with sandbox_permissions: "read-anywhere"')
+    expect(subprocess.spawns).toHaveLength(0)
+  })
+
+  it('denies a grep rooted outside the boundary, spawning nothing', async () => {
+    const { ctx, subprocess } = await setupBoundary()
+    const result = await call(ctx, 'grep', { pattern: 'secret', path: join(outside, 'record.txt') }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain("[sandbox: file read denied outside this session's data boundary]")
+    expect(subprocess.spawns).toHaveLength(0)
+  })
+
+  it('defaults an unspecified root inside the boundary and searches it', async () => {
+    const { ctx, subprocess } = await setupBoundary()
+    subprocess.handler = () => runResult(`${join(workspace, 'kept.txt')}\n`)
+    const result = await call(ctx, 'glob', { pattern: '*.txt' }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(false)
+    expect(subprocess.spawns).toHaveLength(1)
+  })
+
+  it('searches a root inside the boundary', async () => {
+    const { ctx, subprocess } = await setupBoundary()
+    subprocess.handler = () => runResult(`${matchLine(join(workspace, 'nested', 'kept.txt'), 1, 'kept')}\n`)
+    const result = await call(ctx, 'grep', { pattern: 'kept', path: join(workspace, 'nested') }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(false)
+    expect(subprocess.spawns).toHaveLength(1)
+  })
+
+  it('searches outside the boundary after one approved read widening', async () => {
+    const { ctx, subprocess } = await setupBoundary({ approval: true })
+    ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
+    subprocess.handler = () => runResult(`${join(outside, 'record.txt')}\n`)
+    const result = await call(ctx, 'glob', {
+      pattern: '*.txt',
+      path: outside,
+      sandbox_permissions: 'read-anywhere',
+      justification: 'the records this session must compare live outside its workspace',
+    }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(false)
+    expect(subprocess.spawns).toHaveLength(1)
+    // The next search is checked again: the widening covered one call.
+    const denied = await call(ctx, 'glob', { pattern: '*.txt', path: outside }, { agent: boundaryAgent(workspace) })
+    expect(denied.isError).toBe(true)
+    expect(subprocess.spawns).toHaveLength(1)
+  })
+
+  it('greps outside the boundary after one approved read widening', async () => {
+    const { ctx, subprocess } = await setupBoundary({ approval: true })
+    ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
+    subprocess.handler = () => runResult(`${matchLine(join(outside, 'record.txt'), 4, 'the record')}\n`)
+    const result = await call(ctx, 'grep', {
+      pattern: 'record',
+      path: outside,
+      sandbox_permissions: 'read-anywhere',
+      justification: 'the records this session must compare live outside its workspace',
+    }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(false)
+    expect(text(result)).toContain('the record')
+    expect(subprocess.spawns).toHaveLength(1)
+  })
+
+  it('a rejected widening fails closed, spawning nothing', async () => {
+    const { ctx, subprocess } = await setupBoundary({ approval: true })
+    ctx.on('approval/request', () => Promise.resolve('rejected' as const))
+    const result = await call(ctx, 'grep', {
+      pattern: 'secret',
+      path: outside,
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('the user rejected escalating this read to "read-anywhere"')
+    expect(subprocess.spawns).toHaveLength(0)
+  })
+
+  it('a widening without an approval channel fails closed', async () => {
+    const { ctx, subprocess } = await setupBoundary()
+    const result = await call(ctx, 'grep', {
+      pattern: 'secret',
+      path: outside,
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('no approval service is composed')
+    expect(subprocess.spawns).toHaveLength(0)
+  })
+
+  it('refuses the read widening where the deployment confines no reads', async () => {
+    const { ctx, subprocess } = await setup()
+    const result = await call(ctx, 'grep', {
+      pattern: 'secret',
+      path: outside,
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('not available in this composition')
+    expect(subprocess.spawns).toHaveLength(0)
+  })
+
+  it('fails closed when the deployment confines reads but composes no filesystem', async () => {
+    const { ctx, subprocess } = await setupBoundary({ fs: false })
+    const result = await call(ctx, 'glob', { pattern: '*.txt', path: outside }, { agent: boundaryAgent(workspace) })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('composes no filesystem service')
+    expect(subprocess.spawns).toHaveLength(0)
+  })
+
+  it('leaves an agent-less search unconfined', async () => {
+    const { ctx, subprocess } = await setupBoundary()
+    subprocess.handler = () => runResult(`${join(outside, 'record.txt')}\n`)
+    const result = await call(ctx, 'glob', { pattern: '*.txt', path: outside })
+    expect(result.isError).toBe(false)
+    expect(subprocess.spawns).toHaveLength(1)
+  })
+})

@@ -1,8 +1,8 @@
 /**
- * The writable-root derivation shared by every enforcement dialect that
- * expresses a mode as a canonical allow-list: `workspace-write` means "the
- * workspace root plus the platform temp areas", and this module is that
- * meaning's one home. The Seatbelt profile
+ * The allow-list derivations shared by every enforcement dialect that
+ * expresses a mode as a canonical set: `workspace-write` means "the workspace
+ * root plus the platform temp areas" for WRITES, and {@link readRootsFor} is
+ * the separate READ boundary a data-boundary policy adds. The Seatbelt profile
  * (`@deepseek-ai/dsh-sandbox-local`) and the in-process filesystem fence
  * (`@deepseek-ai/dsh-fs-sandbox`) both derive their allow-list here, so "the
  * write tool cannot write /tmp but bash can" asymmetries cannot arise between
@@ -52,4 +52,39 @@ export function canonicalPath(path: string): string {
 export function writableRoots(policy: SandboxExecutionPolicy): string[] {
   if (policy.mode !== 'workspace-write') return []
   return [...new Set([policy.workspaceRoot, '/tmp', tmpdir()].map(canonicalPath))]
+}
+
+/**
+ * Roots a confined process must read to run at all, independent of what the
+ * deployment grants as data: the dynamic loader, the system libraries, and the
+ * device and configuration nodes a shell startup touches. These are the
+ * KERNEL's requirement, not a policy choice, which is why they are fixed here
+ * rather than configured — a deployment's own toolchain (a Homebrew or nvm
+ * `node`) varies per machine and belongs in the policy's read roots instead.
+ *
+ * Shared by the in-process fence and the kernel dialects for the same reason
+ * as {@link writableRoots}: a read the filesystem tool allows and bash refuses,
+ * or the reverse, would make the boundary unstatable.
+ * @returns the canonical platform roots every confined read still reaches.
+ */
+export function systemReadRoots(): string[] {
+  const roots = process.platform === 'darwin'
+    ? ['/usr', '/bin', '/sbin', '/System', '/Library', '/private/etc', '/private/var/db', '/private/var/run', '/dev', '/opt/homebrew']
+    : ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc', '/dev', '/proc', '/sys']
+  return [...new Set(roots.map(canonicalPath))]
+}
+
+/**
+ * The roots one confined execution may READ, or `undefined` when reads are not
+ * confined. A data-boundary policy carries the boundary as `readRoots`; every
+ * root it names is readable, plus the workspace, plus the platform roots
+ * {@link systemReadRoots} fixes. `undefined` keeps the unconfined reads every
+ * deployment had before the boundary existed, so a policy that does not name
+ * one is unchanged.
+ * @param policy - the file-effect policy to derive the read allow-list from.
+ * @returns the canonical readable roots, or `undefined` when reads are unconfined.
+ */
+export function readRootsFor(policy: SandboxExecutionPolicy): string[] | undefined {
+  if (policy.readRoots === undefined) return undefined
+  return [...new Set([policy.workspaceRoot, ...policy.readRoots, ...systemReadRoots()].map(canonicalPath))]
 }

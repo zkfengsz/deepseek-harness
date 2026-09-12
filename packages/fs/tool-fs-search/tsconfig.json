@@ -16,13 +16,37 @@
       "path": "../../../vendor/schemastery"
     },
     {
+      "path": "../fs"
+    },
+    {
+      "path": "../tool-fs"
+    },
+    {
+      "path": "../../sandbox/sandbox"
+    },
+    {
+      "path": "../../sandbox/sandbox-policy"
+    },
+    {
       "path": "../../util/output-retention"
     },
     {
       "path": "../../llm/llm"
     },
     {
+      "path": "../../core/agent"
+    },
+    {
       "path": "../../core/session"
+    },
+    {
+      "path": "../../session/session-projection"
+    },
+    {
+      "path": "../fs-local"
+    },
+    {
+      "path": "../../interaction/user-approval"
     },
     {
       "path": "../../core/tools"

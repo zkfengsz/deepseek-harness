@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-`dsh-fs-sandbox` 按各会话的沙箱模式限制模型对文件的写入与编辑，同时保留本地文件系统的读取行为。`read-only` 拒绝所有变更；`workspace-write` 只允许目标位于会话工作区或平台临时根目录内；`danger-full-access` 不限制变更。当会话需要将文件变更限制在工作区内时，使用它代替 `fs-local`，并加载 `ctx.sandboxPolicy`。被拒绝的操作返回 `FS_SANDBOX_DENIED`，文件系统工具会显示当前模式和同轮次升级提示。
+`dsh-fs-sandbox` 按各会话的沙箱模式与数据边界限制模型对文件的访问。写入与编辑遵循模式：`read-only` 拒绝所有变更，`workspace-write` 只允许目标位于会话工作区或平台临时根目录内，`danger-full-access` 不限制变更。读取遵循另一条边界：设置 `sandboxPolicy.confineReads` 的部署会把每次读取、列目录与元数据观察限制在 `readRootsFor` 派生的根目录内。当会话需要受约束的文件访问时，使用它代替 `fs-local`，并加载 `ctx.sandboxPolicy`。拒绝返回 `FS_SANDBOX_DENIED`；工具对变更显示模式标记、对读取显示边界标记，并各附带重试提示。
 
 ## 目录
 
@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-当模型的文件写入与编辑必须受会话沙箱模式约束、而读取保持不受约束时，挂载此后端以替代 `fs-local`。围栏按调用生效：工具层把调用会话的模式与工作区根目录解析为与 bash runner 收到的相同策略，因此文件系统与 shell 两个能力族绝不会约束到不同根目录。
+当模型的文件访问必须受会话沙箱模式与数据边界约束时，挂载此后端以替代 `fs-local`。围栏按调用生效：工具层把调用会话的模式与工作区根目录解析为与 bash runner 收到的相同策略，因此文件系统与 shell 两个能力族绝不会约束到不同根目录。读取边界同样属于会话，而读取方法不携带策略参数，因此后端从发起当前异步链的 agent（智能体）解析该边界；无 agent 的调用（如加载 skill 时 harness 读取自身机制）没有边界，保持不受约束。
 
 ### 最小组合
 
@@ -45,9 +45,13 @@ kind: "package-reference"
 
 有效模式来自调用会话的覆盖值或升级授权，两者都未生效时才回退到部署默认值。`read-only` 以结构化 `FS_SANDBOX_DENIED` 拒绝所有变更。`workspace-write` 只允许目标规范化后位于工作区根目录或平台临时区域（`/tmp`、`os.tmpdir()`）之下的变更——与 Seatbelt profile 授权的可写集合相同。`danger-full-access` 不加围栏直接委托。
 
+读取的约束独立于模式，因为没有任何写模式会打开读取。当 `sandboxPolicy.confineReads` 生效时，`stat`、`lstat`、`readText`、`streamText`、`readBytes`、`readByteRange` 与 `listDir` 各自重新规范化目标，并要求它位于 `readRootsFor` 派生的某个根之下——会话工作区、部署配置的读取根，以及进程运行所需的平台根。`lstat` 检查规范化后的父目录加上按原样书写的末段名称，因此边界内的符号链接仍可观察，而被替换的祖先链接无法把观察移出边界。`resolve`、`processPath`、`fileUrl` 与 `contains` 不进行任何观察，因此不受围栏约束。
+
 ### 可观察的成功与失败
 
-读取、列出与元数据操作与 `fs-local` 完全一致。被拒绝的变更返回携带有效模式的 `FS_SANDBOX_DENIED` 错误；经工具，模型会看到 `[sandbox: file access denied under <mode> mode]` 及唯一一次获批更宽权限的重试提示，与 bash 的拒绝完全相同。获得批准升级的会话可以在该次调用中以严格更宽的模式重试同一操作。
+未配置读取边界时，读取、列出与元数据操作与 `fs-local` 完全一致。被拒绝的变更返回携带有效模式的 `FS_SANDBOX_DENIED` 错误；经工具，模型会看到 `[sandbox: file access denied under <mode> mode]` 及唯一一次获批更宽权限的重试提示，与 bash 的拒绝完全相同。获得批准升级的会话可以在该次调用中以严格更宽的模式重试同一操作。
+
+被拒绝的读取同样返回 `FS_SANDBOX_DENIED`，工具层把它渲染为 `[sandbox: file read denied outside this session's data boundary]`，并附带指出 `read-anywhere` 值的提示：该值仅为一次获批调用解除边界，且不改变写入权限。
 
 -----
 
@@ -67,12 +71,16 @@ kind: "package-reference"
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `SandboxedFileSystem`：`writeText`/`editText` 上的模式围栏、`sandboxMode` 事实 |
+| [`src/index.ts`](src/index.ts) | `SandboxedFileSystem`：`writeText`/`editText` 上的模式围栏、所有观察方法上的读取围栏、`sandboxMode` 事实 |
 | [`src/containment.ts`](src/containment.ts) | 祖先包含检查，带词法快速路径与基于身份的兜底 |
 
 ### 变更如何被围栏
 
 每次变更先解析按调用策略（`danger-full-access` 原样返回调用方目标；`read-only` 抛出 `FS_SANDBOX_DENIED`），`workspace-write` 则立即重新规范化目标，并要求它位于由唯一的 `writableRoots` 函数派生的某个可写根之下——与 Seatbelt profile 授权的集合相同，因此 fs 围栏与 bash runner 不会漂移。被变更的正是这个新目标，因此工具解析后被替换的符号链接祖先也会被发现。
+
+### 读取如何被围栏
+
+每个观察方法都经由同一个助手：它解析调用会话的读取允许列表，在部署未约束读取时原样返回调用方目标，否则通过 `resolve` 重新规范化目标，并要求它位于某个派生根之下。被读取的正是这个新目标，因此工具解析后被替换的符号链接祖先也会被发现。`lstat` 是路径形状而非目标形状，因此只规范化父目录。
 
 ### 威胁模型
 
@@ -123,6 +131,7 @@ kind: "package-reference"
 - **策略围栏，而非内核边界**：该检查是可信代码处理模型控制的路径，因此解析到系统调用之间残留的 TOCTOU 会被原位重新规范化缩小，但不会消除；对抗性宿主进程不在范围内。不可信代码的内核级隔离仍属于 `ctx.shell`。
 - **围栏与 runner 的一致性由单一所有方派生**：可写集合来自 `writableRoots`，该函数与 Seatbelt profile 共享；在其他位置定义可写集合的 runner profile 会发生漂移。
 - **要求 `ctx.sandboxPolicy`**：工具使用它解析每个会话策略，后端用它处理无 agent（智能体）调用的回退；未组合该服务时，后端不会实施约束。
+- **读取边界需要发起调用的 agent（智能体）**：读取方法不携带策略，边界来自 `ctx.agents.currentInitiator()`；在 agent 轮次之外发起的读取属于无 agent 调用，因此不受约束，与 `SandboxPolicyService.resolve` 对边界的定义完全一致。
 
 <a id="dev-note"></a>
 ### 开发备注

@@ -8,14 +8,16 @@ Source: [`packages/sandbox/sandbox/src/index.ts`](../../packages/sandbox/sandbox
 
 ## Modes and enforcement
 
-`SandboxMode` governs filesystem effects only. `read-only` asks the backend to deny writes — the POSIX runners additionally grant the `/dev/null` sink their shells require, while the Windows ACL runner grants no explicit writable root and reports partial enforcement for its ambient ACL gaps; `workspace-write` permits writes under the workspace root and the backend's promised temp area; `danger-full-access` bypasses confinement. Network and process visibility are outside this vocabulary.
+`SandboxMode` governs filesystem effects only, and among them only writes: `read-only` asks the backend to deny writes — the POSIX runners additionally grant the `/dev/null` sink their shells require, while the Windows ACL runner grants no explicit writable root and reports partial enforcement for its ambient ACL gaps; `workspace-write` permits writes under the workspace root and the backend's promised temp area; `danger-full-access` bypasses confinement. Network and process visibility are outside this vocabulary, and reads are a separate axis — see [the read boundary](#per-call-policy).
 
 ```ts type-equiv
 /**
- * File-effect policy for confined processes. `read-only` permits only required
+ * WRITE policy for confined processes. `read-only` permits only required
  * sinks such as `/dev/null`; `workspace-write` also permits the workspace and a
  * backend-defined temp area; `danger-full-access` bypasses confinement. Network
- * and process visibility are outside this vocabulary.
+ * and process visibility are outside this vocabulary, and so are reads: a mode
+ * says nothing about what a confined process may READ, which is
+ * {@link SandboxExecutionPolicy.readRoots} and is absent by default.
  */
 type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 ```
@@ -61,6 +63,15 @@ interface SandboxExecutionPolicy {
    * for agentless calls, which fall back to per-call backend state.
    */
   sessionId?: SessionId
+  /**
+   * The roots a confined execution may READ beyond {@link workspaceRoot},
+   * which is always readable. Absent means reads are not confined at all —
+   * the behavior of every policy that does not name a data boundary — so an
+   * empty array is the strict boundary and absence is the open one. Derive
+   * the effective allow-list with `readRootsFor`, never by hand: it adds the
+   * workspace and the platform roots a process needs to run.
+   */
+  readRoots?: readonly string[]
 }
 ```
 

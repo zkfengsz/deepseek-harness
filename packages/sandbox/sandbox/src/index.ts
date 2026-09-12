@@ -11,20 +11,25 @@ import type { SessionId } from '@deepseek-ai/dsh-session'
 
 export {
   ESCALATION_TARGETS,
+  READ_ESCALATION_TARGET,
   WIDER_MODES,
   approveEscalation,
   escalationHintMarker,
   sandboxDenialMarker,
   validateEscalationArgs,
 } from './escalation.ts'
-export type { EscalationApproval, EscalationApprover, EscalationOutcome, EscalationRequest } from './escalation.ts'
-export { canonicalPath, writableRoots } from './roots.ts'
+export type {
+  EscalationApproval, EscalationApprover, EscalationOutcome, EscalationRequest, SandboxEscalationGrant,
+} from './escalation.ts'
+export { canonicalPath, readRootsFor, systemReadRoots, writableRoots } from './roots.ts'
 
 /**
- * File-effect policy for confined processes. `read-only` permits only required
+ * WRITE policy for confined processes. `read-only` permits only required
  * sinks such as `/dev/null`; `workspace-write` also permits the workspace and a
  * backend-defined temp area; `danger-full-access` bypasses confinement. Network
- * and process visibility are outside this vocabulary.
+ * and process visibility are outside this vocabulary, and so are reads: a mode
+ * says nothing about what a confined process may READ, which is
+ * {@link SandboxExecutionPolicy.readRoots} and is absent by default.
  */
 export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
 
@@ -49,6 +54,15 @@ export interface SandboxExecutionPolicy {
    * for agentless calls, which fall back to per-call backend state.
    */
   sessionId?: SessionId
+  /**
+   * The roots a confined execution may READ beyond {@link workspaceRoot},
+   * which is always readable. Absent means reads are not confined at all —
+   * the behavior of every policy that does not name a data boundary — so an
+   * empty array is the strict boundary and absence is the open one. Derive
+   * the effective allow-list with `readRootsFor`, never by hand: it adds the
+   * workspace and the platform roots a process needs to run.
+   */
+  readRoots?: readonly string[]
 }
 
 /**

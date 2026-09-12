@@ -1,11 +1,13 @@
 /**
  * Tests for the sandbox-enforcing filesystem backend: the per-call policy fence
  * on write/edit (read-only denies, workspace-write contains, danger-full-access
- * passes through), reads always passing through, the capability fact, and the
- * containment matrix — `..` traversal, absolute paths outside, and symlink
- * escapes (a symlinked directory inside the workspace pointing out, and a new
- * file created under one). The fence is exercised on a real filesystem: a
- * denied write leaves no file on disk.
+ * passes through), the read fence (a deployment that names a read boundary
+ * confines every observing operation to it; one that names none leaves reads
+ * unchanged), the capability fact, and the containment matrix — `..`
+ * traversal, absolute paths outside, and symlink escapes (a symlinked directory
+ * inside the workspace pointing out, and a new file created under one). The
+ * fence is exercised on a real filesystem: a denied write leaves no file on
+ * disk, and a denied read returns no content.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -14,9 +16,13 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, parse } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import AgentRegistry from '@deepseek-ai/dsh-agent'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { FsError, FsTargetKey } from '@deepseek-ai/dsh-fs'
 import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
+import type { Config as SandboxPolicyConfig } from '@deepseek-ai/dsh-sandbox-policy'
+import { SessionId, SessionLogOffset, SessionSeq } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import { SandboxedFileSystem } from '@deepseek-ai/dsh-fs-sandbox'
@@ -28,13 +34,48 @@ let outside: string
 let ctx: Context
 let fs: SandboxedFileSystem
 let fiber: Awaited<ReturnType<Context['plugin']>>
+let agentsFiber: Awaited<ReturnType<Context['plugin']>> | undefined
 
-async function boot(mode: SandboxMode): Promise<void> {
+async function boot(mode: SandboxMode, policy: Pick<SandboxPolicyConfig, 'confineReads' | 'readRoots'> = {}): Promise<void> {
   ctx = new Context()
   await ctx.plugin(SessionProjectionRegistry)
-  await ctx.plugin(SandboxPolicyService, { mode, workspaceRoot: workspace })
+  await ctx.plugin(SandboxPolicyService, { mode, workspaceRoot: workspace, ...policy })
   fiber = await ctx.plugin(SandboxedFileSystem, { cwd: workspace })
   fs = ctx.fs as SandboxedFileSystem
+}
+
+/**
+ * A confining deployment whose read boundary belongs to a session, plus the
+ * agent registry that carries the initiating agent. The session carries the
+ * minimal log surface `ctx.sandboxPolicy.resolve` folds the mode override from.
+ */
+async function bootReadConfined(): Promise<void> {
+  await boot('workspace-write', { confineReads: true })
+  agentsFiber = await ctx.plugin(AgentRegistry)
+}
+
+/** The session the confined reads belong to: its cwd is the workspace. */
+function callingAgent(cwd = workspace): Agent {
+  const id = SessionId('sess-fs-read')
+  const events = [{ type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } }]
+  return {
+    id,
+    session: {
+      id,
+      header: { version: 0, id, createdAt: 0, cwd, isSeeded: false },
+      inheritedEventCount: SessionLogOffset(0),
+      firstLiveSeq: SessionLogOffset(0),
+      seq: SessionLogOffset(events.length),
+      eventAt: (seq: number) => events[seq],
+      snapshotEvents: (fromSeq = 0, toSeqExclusive = events.length) => events.slice(fromSeq, toSeqExclusive),
+      append: () => { throw new Error('the read-fence fixture never appends') },
+    },
+  } as unknown as Agent
+}
+
+/** Run one operation as the initiating agent (the boundary a read is resolved against). */
+function asCaller<T>(operation: () => Promise<T>, cwd = workspace): Promise<T> {
+  return ctx.agents.withInitiator(callingAgent(cwd), operation)
 }
 
 beforeEach(async ({ onTestFinished }) => {
@@ -49,6 +90,8 @@ beforeEach(async ({ onTestFinished }) => {
   await mkdir(outside)
 })
 afterEach(async () => {
+  await agentsFiber?.dispose()
+  agentsFiber = undefined
   await fiber?.dispose()
 })
 
@@ -236,8 +279,118 @@ describe('registration and HMR safety', () => {
 describe('FsError identity', () => {
   it('the denial is a structured FsError distinct from a host permission error', async () => {
     await boot('read-only')
-    const error = await fs.writeText(await target(join(workspace, 'x.txt')), 'x').catch((e: unknown) => e)
+    const error = await fs.writeText(await target(join(workspace, 'x.txt')), 'x').catch((e: unknown) => e as object)
     expect(error).toBeInstanceOf(FsError)
     expect((error as FsError).code).toBe('FS_SANDBOX_DENIED')
+  })
+})
+
+/** The denial the read fence throws, as the model-facing tool layer receives it. */
+function readDenied(): object {
+  const message = expect.stringContaining("outside this session's data boundary") as unknown as string
+  return { code: 'FS_SANDBOX_DENIED', message }
+}
+
+describe('reads without a named boundary', () => {
+  it('reads outside the workspace unchanged (no boundary configured)', async () => {
+    await boot('workspace-write')
+    const path = join(outside, 'plain.txt')
+    await writeFile(path, 'readable')
+    expect(await fs.readText(await target(path))).toBe('readable')
+  })
+
+  it('inspects a path outside the workspace unchanged (lstat without a boundary)', async () => {
+    await boot('workspace-write')
+    const path = join(outside, 'probed.txt')
+    await writeFile(path, 'probed')
+    expect(await fs.lstat(path)).toMatchObject({ type: 'file' })
+  })
+})
+
+describe('the read boundary (a deployment that confines reads)', () => {
+  beforeEach(bootReadConfined)
+
+  it('reads a file inside the boundary', async () => {
+    const path = join(workspace, 'inside.txt')
+    await writeFile(path, 'inside')
+    expect(await asCaller(async () => fs.readText(await fs.resolve(path)))).toBe('inside')
+  })
+
+  it('denies a read outside the boundary, naming the boundary and returning no content', async () => {
+    const path = join(outside, 'secret.txt')
+    await writeFile(path, 'secret')
+    const error = await asCaller(async () => fs.readText(await fs.resolve(path))).catch((e: unknown) => e as object)
+    expect(error).toMatchObject(readDenied())
+    expect(error).toBeInstanceOf(FsError)
+  })
+
+  it('reads a configured deployment read root outside the workspace', async () => {
+    const deploy = join(base, 'deploy')
+    await mkdir(deploy)
+    await writeFile(join(deploy, 'skill.md'), 'skill')
+    await boot('workspace-write', { confineReads: true, readRoots: [deploy] })
+    agentsFiber = await ctx.plugin(AgentRegistry)
+    expect(await asCaller(async () => fs.readText(await fs.resolve(join(deploy, 'skill.md'))))).toBe('skill')
+  })
+
+  it('leaves agentless reads unconfined (the harness reads its own machinery)', async () => {
+    const path = join(outside, 'harness.txt')
+    await writeFile(path, 'harness')
+    expect(await fs.readText(await fs.resolve(path))).toBe('harness')
+  })
+
+  it('confines every observing operation outside the boundary', async () => {
+    const file = join(outside, 'observed.txt')
+    await writeFile(file, 'observed')
+    const directory = join(outside, 'listing')
+    await mkdir(directory)
+    await writeFile(join(directory, 'child.txt'), 'child')
+    const fileTarget = await fs.resolve(file)
+    const dirTarget = await fs.resolve(directory)
+    await expect(asCaller(() => fs.stat(fileTarget))).rejects.toMatchObject(readDenied())
+    await expect(asCaller(async () => fs.streamText(await fs.resolve(file)))).rejects.toMatchObject(readDenied())
+    await expect(asCaller(() => fs.readBytes(fileTarget, undefined, 1024))).rejects.toMatchObject(readDenied())
+    await expect(asCaller(() => fs.readByteRange(fileTarget, { offset: 0, length: 2 }))).rejects.toMatchObject(readDenied())
+    await expect(asCaller(() => fs.listDir(dirTarget))).rejects.toMatchObject(readDenied())
+  })
+
+  it('confines the no-follow path inspection outside the boundary, and allows a link inside it', async () => {
+    const file = join(outside, 'probed.txt')
+    await writeFile(file, 'probed')
+    // workspace/out-link -> outside : the link is observed itself, so reading its
+    // own metadata stays inside the boundary while the path it names does not.
+    await symlink(outside, join(workspace, 'out-link'))
+    await expect(asCaller(() => fs.lstat(file))).rejects.toMatchObject(readDenied())
+    await expect(asCaller(() => fs.lstat(join(workspace, 'out-link')))).resolves.toMatchObject({ type: 'symlink' })
+    await expect(asCaller(() => fs.lstat('inside-link', { cwd: workspace }))).resolves.toBeUndefined()
+  })
+
+  it('denies a read through a symlinked ancestor pointing out of the boundary', async () => {
+    const path = join(outside, 'through-link.txt')
+    await writeFile(path, 'escaped')
+    await symlink(outside, join(workspace, 'link'))
+    await expect(asCaller(async () => fs.readText(await fs.resolve(join(workspace, 'link', 'through-link.txt')))))
+      .rejects.toMatchObject(readDenied())
+  })
+
+  it('denies a read whose ancestor was swapped for an outside link after the caller resolved it', async () => {
+    const swapped = join(workspace, 'swapped')
+    await mkdir(swapped)
+    const target = await fs.resolve(join(swapped, 'victim.txt'))
+    // The caller resolved an in-workspace path; the ancestor is replaced by a
+    // link out before the read, and the fence canonicalizes again.
+    await rm(swapped, { recursive: true })
+    await writeFile(join(outside, 'victim.txt'), 'victim')
+    await symlink(outside, swapped)
+    await expect(asCaller(() => fs.readText(target))).rejects.toMatchObject(readDenied())
+    expect(await readFile(join(outside, 'victim.txt'), 'utf8')).toBe('victim')
+  })
+
+  it('reads a file that a symlink inside the boundary points AT (the read follows into the root)', async () => {
+    const inner = join(workspace, 'inner.txt')
+    await writeFile(inner, 'inner')
+    await symlink(inner, join(workspace, 'inner-link'))
+    expect(await asCaller(async () => fs.readText(await fs.resolve(join(workspace, 'inner-link'))))).toBe('inner')
+    expect(await asCaller(async () => fs.listDir(await fs.resolve(workspace)))).toHaveLength(2)
   })
 })

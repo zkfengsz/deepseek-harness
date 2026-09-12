@@ -40,12 +40,16 @@ Load the package with a default mode; the fail-safe default is `read-only`, and 
   config:
     mode: workspace-write
     workspaceRoot: /absolute/path/to/workspace
+    confineReads: true
+    readRoots: [/absolute/path/to/skills]
 ```
 
 | Field | Default | Meaning |
 |---|---|---|
 | `mode` | `read-only` | The deployment default mode a session starts from, validated at load |
 | `workspaceRoot` | `process.cwd()` | The fallback root `workspace-write` may write under for agentless calls or sessions without a cwd; normal agent calls use the session's immutable cwd instead |
+| `confineReads` | `false` | Whether a session's reads stop at its own workspace; a deployment that leaves this off keeps today's unconfined reads |
+| `readRoots` | `[]` | Roots a confined session may also read — its skill directories, the toolchain it runs; ignored unless `confineReads` is on |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-sandbox-policy) is the exhaustive source for every accepted field and its JSDoc.
 

@@ -18,12 +18,13 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-jobs'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-shell-env'
-import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { ESCALATION_TARGETS, approveEscalation, canonicalPath, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
+import type { SandboxEscalationGrant, SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
+import { ESCALATION_TARGETS, READ_ESCALATION_TARGET, approveEscalation, canonicalPath, readRootsFor, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import { DSH_ENV_PREFIX } from '@deepseek-ai/dsh-shell'
 import type { ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { processOutcome } from './background.ts'
+import type { EscalationTarget } from './render.ts'
 import { parseExitStatus, renderProcessRead, renderResult } from './render.ts'
 
 export const name = 'tool-bash'
@@ -66,7 +67,7 @@ function validateBashArgs(args: BashToolArgs): void {
   validateEscalationArgs(args.sandbox_permissions, args.justification)
 }
 
-function bashDescription(backgroundEnabled: boolean, escalationModes: readonly SandboxMode[]): string {
+function bashDescription(backgroundEnabled: boolean, escalationTargets: readonly EscalationTarget[]): string {
   const background = backgroundEnabled
     ? 'Set `run_in_background: true` for long-running commands: the call returns a job id immediately; read its output with `job_output` and stop it with `job_kill`.'
     : 'Background execution is not available; long-running commands must finish within the timeout.'
@@ -77,8 +78,8 @@ function bashDescription(backgroundEnabled: boolean, escalationModes: readonly S
     + 'Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]` — a policy denial, not a bug in the command; do not retry another way. '
     + 'Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. '
     + background
-  if (escalationModes.length === 0) return base
-  return base + ' Attempting a command the sandbox may deny is safe and expected: run it and read the '
+  if (escalationTargets.length === 0) return base
+  const escalation = base + ' Attempting a command the sandbox may deny is safe and expected: run it and read the '
     + 'marker rather than assuming the denial. When a command is denied and a wider mode would let it '
     + 'succeed, escalate immediately in the same turn — the one sanctioned exception to a denial: retry '
     + 'the exact same command once with `sandbox_permissions` (the narrowest wider mode that suffices) '
@@ -89,6 +90,13 @@ function bashDescription(backgroundEnabled: boolean, escalationModes: readonly S
     + 'just hit; escalating up front is fine only when this session already denied the same access. '
     + 'A rejected escalation is final for that command — stop and explain, never work around '
     + 'it — but it does not forbid attempting or escalating other commands later.'
+  // The read target is taught exactly where it is advertised, so a deployment that
+  // confines no reads never names a value its schema omits.
+  if (!escalationTargets.includes(READ_ESCALATION_TARGET)) return escalation
+  return escalation
+    + ` A READ denied by this session's data boundary escalates to \`${READ_ESCALATION_TARGET}\` instead: `
+    + 'it opens reads for that one call and grants no write permission, so a read the data boundary '
+    + 'denied never justifies a wider mode.'
 }
 
 /**
@@ -186,14 +194,56 @@ const BACKGROUND_OUTPUT_PROPERTIES = {
   jobId: { type: 'string', required: true },
 } as const
 
+/**
+ * The `sandbox_permissions` field description. It names the read target only
+ * where the enum advertises it, so the field text and the enum agree — and a
+ * composition that confines no reads keeps the write-ladder wording verbatim.
+ * @param escalationTargets - the escalation values this composition advertises.
+ * @returns the field description.
+ */
+function escalationFieldDescription(escalationTargets: readonly EscalationTarget[]): string {
+  const access = escalationTargets.includes(READ_ESCALATION_TARGET)
+    ? 'The wider sandbox access this command needs: a wider sandbox mode, or `read-anywhere` to open reads for this one call.'
+    : 'The wider sandbox mode this command needs.'
+  return `${access} Only valid as a one-shot retry of a command the sandbox just denied; requires justification and user approval.`
+}
+
+/**
+ * Apply one approved escalation grant to the policy this call runs under. A
+ * wider mode leaves the read boundary exactly as the session resolved it, and
+ * the read grant lifts that boundary while leaving the mode alone — neither
+ * grant implies the other, and both last for this one call.
+ * @param policy - the standing policy resolved before approval.
+ * @param grant - the approved widening the call asked for.
+ * @returns the policy to stamp onto this call.
+ */
+function applyEscalationGrant(policy: SandboxExecutionPolicy, grant: SandboxEscalationGrant): SandboxExecutionPolicy {
+  if (grant.kind === 'mode') return { ...policy, mode: grant.mode }
+  // Reads are unconfined exactly when `readRoots` is absent, so the property is
+  // dropped rather than set. Nothing else about the resolved policy changes.
+  const { readRoots: _lifted, ...unconfined } = policy
+  return unconfined
+}
+
 export function apply(ctx: Context, config: Config = {}): void {
   const backgroundEnabled = config.enableRunInBackground ?? true
   const defaultMode = ctx.shell.sandboxMode
-  const escalationModes: readonly SandboxMode[] = defaultMode === undefined ? [] : ESCALATION_TARGETS
   const sandboxPolicy: SandboxPolicyService | undefined = defaultMode === undefined ? undefined : ctx.get('sandboxPolicy')
   if (defaultMode !== undefined && sandboxPolicy === undefined) {
     throw new Error('tool-bash: the mounted bash executor confines but ctx.sandboxPolicy is missing')
   }
+  // A schema is projected once while the effective policy is per-call truth, so
+  // the enum carries every target this composition can reach: the write ladder
+  // whenever a confining executor is mounted, plus the read target when the
+  // deployment confines reads (the deployment fact the policy service publishes
+  // for exactly this apply-time decision). An unadvertised value never reaches
+  // execute — argument validation rejects it — and the read target's own
+  // precondition is re-checked per call through `readsConfined`.
+  const escalationTargets: readonly EscalationTarget[] = defaultMode === undefined
+    ? []
+    : sandboxPolicy?.confineReads === true
+      ? [...ESCALATION_TARGETS, READ_ESCALATION_TARGET]
+      : ESCALATION_TARGETS
   /** Resolve the complete standing policy for this call when a confining executor is mounted. */
   const resolveSandboxPolicy = (exec: ToolExecution): SandboxExecutionPolicy | undefined =>
     sandboxPolicy?.resolve(exec.agent === undefined ? {} : { session: exec.agent.session })
@@ -201,11 +251,11 @@ export function apply(ctx: Context, config: Config = {}): void {
   /**
    * Resolve a sandbox-escalation request through `ctx.approval` BEFORE
    * anything executes, delegating the shared fail-closed sequence (strict
-   * widening, channel resolution, outcome mapping) to
-   * {@link approveEscalation}. This tool contributes only the composition
-   * guard (the fields are unadvertised without a sandboxing executor, yet
-   * schema validation checks advertised keys only, so an unadvertised
-   * `sandbox_permissions` still reaches execute) and the approval
+   * widening, the read target's boundary precondition, channel resolution,
+   * outcome mapping) to {@link approveEscalation}. This tool contributes only
+   * the composition guard (the fields are unadvertised without a sandboxing
+   * executor, yet schema validation checks advertised keys only, so an
+   * unadvertised `sandbox_permissions` still reaches execute) and the approval
    * ingredients. The shared policy resolver is required whenever the executor
    * advertises confinement, so a split composition fails at tool-plugin load.
    */
@@ -214,13 +264,19 @@ export function apply(ctx: Context, config: Config = {}): void {
     justification: string,
     exec: ToolExecution,
     standingPolicy: SandboxExecutionPolicy | undefined,
-  ): Promise<SandboxMode> => {
-    if (escalationModes.length === 0) {
+  ): Promise<SandboxEscalationGrant> => {
+    if (escalationTargets.length === 0) {
       throw new Error('sandbox_permissions is not available in this composition (no sandboxing executor to escalate)')
     }
-    const effectiveMode = (standingPolicy as SandboxExecutionPolicy).mode
+    const policy = standingPolicy as SandboxExecutionPolicy
     return approveEscalation(
-      { requestedMode: mode, justification, effectiveMode, subject: 'command' },
+      {
+        requestedMode: mode,
+        justification,
+        effectiveMode: policy.mode,
+        subject: 'command',
+        readsConfined: readRootsFor(policy) !== undefined,
+      },
       {
         approver: ctx.get('approval'),
         agent: exec.agent,
@@ -240,7 +296,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   ctx.tools.register(defineTool({
     name: 'bash',
-    description: bashDescription(backgroundEnabled, escalationModes),
+    description: bashDescription(backgroundEnabled, escalationTargets),
     parameters: {
       command: { type: 'string', required: true, description: 'The bash command to execute.' },
       description: {
@@ -255,11 +311,11 @@ export function apply(ctx: Context, config: Config = {}): void {
       ...backgroundEnabled ? {
         run_in_background: { type: 'boolean' as const, description: 'Run in the background and return a job id immediately (collect with job_output, stop with job_kill). No timeout applies.' },
       } : {},
-      ...escalationModes.length > 0 ? {
+      ...escalationTargets.length > 0 ? {
         sandbox_permissions: {
           type: 'string' as const,
-          enum: [...escalationModes],
-          description: 'The wider sandbox mode this command needs. Only valid as a one-shot retry of a command the sandbox just denied; requires justification and user approval.',
+          enum: [...escalationTargets],
+          description: escalationFieldDescription(escalationTargets),
         },
         justification: {
           type: 'string' as const,
@@ -323,19 +379,19 @@ export function apply(ctx: Context, config: Config = {}): void {
         type: 'text',
         text: value.kind === 'background'
           ? `started background job ${value.jobId}`
-          : renderResult(value as { kind: 'foreground' } & ShellRunResult, escalationModes),
+          : renderResult(value as { kind: 'foreground' } & ShellRunResult, escalationTargets),
       }],
     },
     async execute(args: BashToolArgs, exec) {
       validateBashArgs(args)
       // Description is display metadata; workdir defaults to the caller's session.
       const standingPolicy = resolveSandboxPolicy(exec)
-      const approvedMode = args.sandbox_permissions !== undefined && args.justification !== undefined
+      const grant = args.sandbox_permissions !== undefined && args.justification !== undefined
         ? await approveBashEscalation(args.sandbox_permissions, args.justification, exec, standingPolicy)
         : undefined
-      const policy = approvedMode === undefined
+      const policy = grant === undefined
         ? standingPolicy
-        : { ...(standingPolicy as SandboxExecutionPolicy), mode: approvedMode }
+        : applyEscalationGrant(standingPolicy as SandboxExecutionPolicy, grant)
       const workdir = resolveWorkdir(args.workdir, exec, standingPolicy?.workspaceRoot)
       const dshEnv = ctx.shellEnv.collect(exec)
       const request = {
@@ -370,7 +426,7 @@ export function apply(ctx: Context, config: Config = {}): void {
             return {
               cancel: () => void proc.kill(),
               done: proc.done.then(() => processOutcome(proc)),
-              readOutput: () => renderProcessRead(proc.readOutput(), proc.sandbox, escalationModes),
+              readOutput: () => renderProcessRead(proc.readOutput(), proc.sandbox, escalationTargets),
             }
           },
         })

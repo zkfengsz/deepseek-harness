@@ -17,6 +17,8 @@
  * and raw output capture. The package injects `tools`, `systemPrompt`, and
  * `subprocess` — deliberately NOT `fs`, and `ctx.spillStore` is read
  * opportunistically with `ctx.get()` because formatted-result spill is optional.
+ * The read boundary (`ctx.sandboxPolicy`, plus `ctx.fs` for the containment test
+ * only while a deployment confines reads) is read the same opportunistic way.
  *
  * Returned paths are displayed relative to the resolved workdir and are
  * follow-up-readable only in co-located deployments where the workdir and the
@@ -32,6 +34,7 @@ import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { GLOB_MAX_RESULTS, applyGlobTool } from './glob.ts'
 import { GREP_MAX_LINE_BYTES, GREP_MAX_MATCHES, applyGrepTool } from './grep.ts'
 import { RAW_OUTPUT_MAX_BYTES, SEARCH_GRACE_MS, SEARCH_META_MAX_BYTES, SEARCH_STDERR_MAX_BYTES, SEARCH_TIMEOUT_MS } from './search-core.ts'
+import { SearchSandbox } from './sandbox.ts'
 
 export { GLOB_MAX_RESULTS, GLOB_VCS_EXCLUDES, applyGlobTool, buildGlobCommand, formatGlobOutput, parseGlobArgs, presentGlobCall, presentGlobResult, sampleAcrossTopLevel } from './glob.ts'
 export type { GlobInput, GlobSample, GlobToolCaps } from './glob.ts'
@@ -62,6 +65,7 @@ export {
   trySaveFormattedResult,
 } from './search-core.ts'
 export type { GrepMatch, RipgrepRun, SearchErrorCode } from './search-core.ts'
+export { SearchSandbox } from './sandbox.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-fs-search'
@@ -139,6 +143,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   }
   assertPositiveInteger('stderrMaxBytes', resolved.stderrMaxBytes)
   assertPositiveInteger('timeoutMs', resolved.timeoutMs)
+  // The read boundary both tools pass before spawning: the deployment's
+  // allow-list (ctx.sandboxPolicy) plus the containment test ctx.fs exposes. A
+  // composition that confines no reads reaches neither check.
+  const sandbox = new SearchSandbox(ctx)
   applyGlobTool(ctx, {
     sampleOverCapGlobResults: resolved.sampleOverCapGlobResults,
     maxResults: resolved.globMaxResults,
@@ -147,7 +155,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     graceMs: resolved.graceMs,
     stderrMaxBytes: resolved.stderrMaxBytes,
     timeoutMs: resolved.timeoutMs,
-  })
+  }, sandbox)
   applyGrepTool(ctx, {
     maxMatches: resolved.grepMaxMatches,
     maxLineBytes: resolved.grepMaxLineBytes,
@@ -156,5 +164,5 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     graceMs: resolved.graceMs,
     stderrMaxBytes: resolved.stderrMaxBytes,
     timeoutMs: resolved.timeoutMs,
-  })
+  }, sandbox)
 }

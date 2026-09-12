@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-fs-sandbox` confines model file writes and edits according to each session's sandbox mode while preserving the local filesystem's read behavior. In `read-only`, it rejects every mutation; in `workspace-write`, it permits targets only inside the session workspace or a platform temporary root; in `danger-full-access`, it does not restrict mutations. Use it instead of `fs-local` with `ctx.sandboxPolicy` when sessions need workspace-confined file changes. Denied operations return `FS_SANDBOX_DENIED`, which filesystem tools present with the active mode and a same-turn escalation hint.
+`dsh-fs-sandbox` confines model file access by each session's sandbox mode and data boundary. Writes follow the mode: `read-only` rejects every mutation, `workspace-write` permits targets only inside the session workspace or a platform temporary root, and `danger-full-access` does not restrict mutations. Reads follow a separate boundary: a deployment that sets `sandboxPolicy.confineReads` confines every read, listing, and metadata observation to the roots `readRootsFor` derives. Use it instead of `fs-local` with `ctx.sandboxPolicy` when sessions need confined access. Denials return `FS_SANDBOX_DENIED`, which the tools present with a mode marker or a boundary marker, each with a retry hint.
 
 ## Table of Contents
 
@@ -25,7 +25,7 @@ English | [中文](README.zh.md)
 <a id="use-this-package"></a>
 ## Use this package
 
-Mount this backend instead of `fs-local` when the model's file writes and edits must be confined by the session's sandbox mode, while reads stay unconfined. The fence applies per call: the tool layer resolves the calling session's mode and workspace root into the same policy the bash runner receives, so the filesystem and shell families never confine to different roots.
+Mount this backend instead of `fs-local` when the model's file access must be confined by the session's sandbox mode and data boundary. The fence applies per call: the tool layer resolves the calling session's mode and workspace root into the same policy the bash runner receives, so the filesystem and shell families never confine to different roots. The read boundary belongs to a session too, and a read method carries no policy argument, so the backend resolves it from the agent that initiated the current asynchronous chain; an agent-less call (the harness reading its own machinery, such as skill loading) has no boundary and stays unconfined.
 
 ### Minimal composition
 
@@ -45,9 +45,13 @@ The backend's config is unchanged from the local backend's (`cwd` resolution def
 
 The effective mode comes from the calling session's override or escalation grant, falling back to the deployment default when neither is in force. `read-only` denies every mutation with the structured `FS_SANDBOX_DENIED`. `workspace-write` allows a mutation only when the target canonicalizes under the workspace root or a platform temp area (`/tmp`, `os.tmpdir()`) — the same writable set the Seatbelt profile grants. `danger-full-access` delegates unfenced.
 
+Reads are confined independently of the mode, because no write mode opens them. While `sandboxPolicy.confineReads` is set, `stat`, `lstat`, `readText`, `streamText`, `readBytes`, `readByteRange`, and `listDir` each re-canonicalize their target and require containment under one of the roots `readRootsFor` derives — the session workspace, the deployment's configured read roots, and the platform roots a process needs to run. `lstat` checks the canonical parent plus the path's last component as spelled, so a symbolic link inside the boundary stays inspectable while a swapped ancestor link cannot move the observation out of it. `resolve`, `processPath`, `fileUrl`, and `contains` perform no observation and stay unfenced.
+
 ### Observable success and failures
 
-Reads, listings, and metadata work exactly as with `fs-local`. A denied mutation returns an `FS_SANDBOX_DENIED` error carrying the effective mode; through the tools the model sees `[sandbox: file access denied under <mode> mode]` plus the one-approved-wider retry hint, identical to bash's denials. A session with an approved escalation may retry the same operation at a strictly wider mode for that one call.
+Without a configured read boundary, reads, listings, and metadata work exactly as with `fs-local`. A denied mutation returns an `FS_SANDBOX_DENIED` error carrying the effective mode; through the tools the model sees `[sandbox: file access denied under <mode> mode]` plus the one-approved-wider retry hint, identical to bash's denials. A session with an approved escalation may retry the same operation at a strictly wider mode for that one call.
+
+A denied read also returns `FS_SANDBOX_DENIED`, and the tool layer renders it as `[sandbox: file read denied outside this session's data boundary]` plus a hint naming the `read-anywhere` value that lifts the boundary for one approved call and changes nothing about writes.
 
 -----
 
@@ -67,12 +71,16 @@ The fence is a policy check in trusted code over a model-controlled path — not
 
 | File | Role |
 |---|---|
-| [`src/index.ts`](src/index.ts) | `SandboxedFileSystem`: mode fence on `writeText`/`editText`, `sandboxMode` fact |
+| [`src/index.ts`](src/index.ts) | `SandboxedFileSystem`: mode fence on `writeText`/`editText`, read fence on every observing method, `sandboxMode` fact |
 | [`src/containment.ts`](src/containment.ts) | Ancestor containment check with lexical fast path and identity-based fallback |
 
 ### How a mutation is fenced
 
 Each mutation resolves the per-call policy (`danger-full-access` returns the caller's target untouched; `read-only` throws `FS_SANDBOX_DENIED`), then for `workspace-write` re-canonicalizes the target immediately and requires containment under one of the writable roots derived from the single `writableRoots` function — the same set the Seatbelt profile grants, so the fs fence and the bash runner cannot drift. The fresh target is the one mutated, so a symlink ancestor swapped since the tool resolved it is caught.
+
+### How a read is fenced
+
+Every observing method delegates through one helper that resolves the calling session's read allow-list, returns the caller's target untouched when the deployment confines no reads, re-canonicalizes the target through `resolve` otherwise, and requires containment under one of the derived roots. The fresh target is the one read, so a symlink ancestor swapped since the tool resolved it is caught. `lstat` is path-shaped rather than target-shaped and therefore canonicalizes the parent only.
 
 ### Threat model
 
@@ -123,6 +131,7 @@ These limits define when the sandbox backend is a poor fit or needs special oper
 - **A policy fence, not a kernel boundary** — the check is trusted code over a model-controlled path, so the residual resolve-to-syscall TOCTOU is narrowed (by the in-place re-canonicalization) but not eliminated; adversarial host processes are out of scope. Kernel-grade isolation of untrusted code stays `ctx.shell`'s.
 - **Fence-vs-runner parity is derived from one owner** — the writable set comes from `writableRoots`, shared with the Seatbelt profile; a runner profile that defines its writable set elsewhere would drift.
 - **Requires `ctx.sandboxPolicy`** — tools use it to resolve each session policy and the backend uses it for agentless-call fallbacks; the backend does not confine without it composed.
+- **The read boundary needs an initiating agent** — a read method carries no policy, so the boundary is resolved from `ctx.agents.currentInitiator()`; a read issued outside an agent turn is agent-less and therefore unconfined, exactly as `SandboxPolicyService.resolve` defines the boundary.
 
 <a id="dev-note"></a>
 ### Dev Note

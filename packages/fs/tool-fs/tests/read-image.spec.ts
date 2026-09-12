@@ -19,6 +19,9 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { RUN_CODE_NAME } from '@deepseek-ai/dsh-tools'
 import type { Config as ToolConfig } from '@deepseek-ai/dsh-tools'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
+import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import * as FsPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import LocalAttachmentStore from '@deepseek-ai/dsh-attachment-local'
 import { AttachmentError, AttachmentId, AttachmentStore } from '@deepseek-ai/dsh-attachment'
@@ -92,7 +95,15 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true })
 })
 
+/** The local backend with the capability fact a confining mount reports. */
+class ConfiningLocalFileSystem extends LocalFileSystem {
+  override get sandboxMode(): SandboxMode {
+    return 'workspace-write'
+  }
+}
+
 interface SetupOptions {
+  confineReads?: boolean
   models?: LlmModelInfo[]
   resolvedModels?: LlmModelInfo[]
   attachments?: boolean
@@ -108,7 +119,13 @@ async function setup(options: SetupOptions = {}) {
   if (options.toolMode === 'ptc' || options.toolMode === 'both') {
     await ctx.plugin(FakeRuntime)
   }
-  await ctx.plugin(LocalFileSystem, { cwd: dir })
+  if (options.confineReads === true) {
+    await ctx.plugin(SessionProjectionRegistry)
+    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: dir, confineReads: true })
+    await ctx.plugin(ConfiningLocalFileSystem, { cwd: dir })
+  } else {
+    await ctx.plugin(LocalFileSystem, { cwd: dir })
+  }
   await ctx.plugin(FsPolicy)
   if (options.attachments !== false) {
     await ctx.plugin(LocalAttachmentStore, { dshHome: home, ...options.storeConfig })
@@ -508,6 +525,18 @@ describe('argument and service preconditions', () => {
     expect(text(nonImage)).toContain('the .txt extension does not declare a supported image format')
   })
 
+  it('advertises the read widening on read_image only where the deployment confines reads', async () => {
+    const open = await setup()
+    const openSchema = open.tools.schemas().find(schema => schema.name === 'read_image')
+    expect((openSchema?.parameters as { properties: Record<string, unknown> }).properties['sandbox_permissions']).toBeUndefined()
+
+    const confined = await setup({ confineReads: true })
+    const confinedSchema = confined.tools.schemas().find(schema => schema.name === 'read_image')
+    const properties = (confinedSchema?.parameters as { properties: Record<string, { enum?: string[] }> }).properties
+    expect(properties['sandbox_permissions']?.enum).toEqual(['read-anywhere'])
+    expect(properties['justification']).toBeDefined()
+  })
+
   it('refuses when no attachment service is mounted', async () => {
     await writeFile(join(dir, 'red.png'), PNG_1X1)
     const ctx = await setup({ attachments: false })
@@ -521,7 +550,7 @@ describe('argument and service preconditions', () => {
   it('defensively refuses execution without an attachment service', async () => {
     await writeFile(join(dir, 'red.png'), PNG_1X1)
     const ctx = await setup({ attachments: false })
-    applyReadImageTool(ctx)
+    applyReadImageTool(ctx, new ToolFs.FsSandboxController(ctx))
     const result = await readImage(ctx, { file_path: 'red.png' }, agentOn('vision-model'))
     expect(result.isError).toBe(true)
     expect(text(result)).toContain('no attachment service is mounted')

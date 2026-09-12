@@ -73,13 +73,15 @@ export const SEARCH_META_MAX_BYTES = 65_536
  * `--json`); `SEARCH_RAW_OUTPUT_OVERFLOW` — raw `rg` output exceeded
  * `rawOutputMaxBytes` or stayed truncated after that requested stdout budget;
  * `SEARCH_ABORTED` — the cooperative tool timeout or caller cancellation cut
- * the search short.
+ * the search short; `SEARCH_DENIED` — the search root lies outside the calling
+ * session's data boundary (or the deployment cannot prove it does not).
  */
 export type SearchErrorCode =
   | 'SEARCH_INVALID_PATTERN'
   | 'SEARCH_FAILED'
   | 'SEARCH_RAW_OUTPUT_OVERFLOW'
   | 'SEARCH_ABORTED'
+  | 'SEARCH_DENIED'
 
 /**
  * Typed search failure. Extends {@link HarnessError} so it carries a stable

@@ -15,6 +15,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, SearchResultView, ToolResult } from '@deepseek-ai/dsh-tools'
 import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import { runRipgrep, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
+import type { SearchSandbox } from './sandbox.ts'
 import { globSearchMeta, searchViewFromMeta } from './presentation.ts'
 import { acceptedDirectCallValue } from './direct-call.ts'
 
@@ -58,6 +59,15 @@ export interface GlobToolCaps {
 export interface GlobInput {
   pattern: string
   path?: string
+}
+
+/**
+ * The `glob` tool's raw arguments: {@link GlobInput} plus the two escalation
+ * fields, advertised only while this deployment confines its sessions' reads.
+ */
+interface GlobToolArgs extends GlobInput {
+  sandbox_permissions?: string
+  justification?: string
 }
 
 /**
@@ -292,8 +302,9 @@ export function presentGlobResult(_args: { pattern: string; path?: string }, res
  * @param ctx - the plugin context; registrations are effects scoped to it, and
  *   execution uses its `subprocess` service.
  * @param caps - the deployment's resolved glob caps (plugin config after defaulting).
+ * @param sandbox - the read-boundary API (advertisement, root check, approved one-call widening).
  */
-export function applyGlobTool(ctx: Context, caps: GlobToolCaps): void {
+export function applyGlobTool(ctx: Context, caps: GlobToolCaps, sandbox: SearchSandbox): void {
   const overCapGuidance = caps.sampleOverCapGlobResults
     ? 'while a larger one is sampled across top-level entries, so it spans the tree instead of one subtree.'
     : 'while a larger one keeps the modification-time-ordered head.'
@@ -323,6 +334,7 @@ export function applyGlobTool(ctx: Context, caps: GlobToolCaps): void {
           + 'A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth.',
       },
       path: { type: 'string', description: 'Directory to search in. Defaults to the session workspace; a relative path resolves against it.' },
+      ...sandbox.readEscalationModes.length > 0 ? sandbox.schemaFields() : {},
     },
     timeoutMs: caps.timeoutMs,
     output: {
@@ -340,8 +352,12 @@ export function applyGlobTool(ctx: Context, caps: GlobToolCaps): void {
         return globSearchMeta({ items: page.items, truncated: page.truncated, seen: value.paths.length }, caps.maxMetaBytes)
       },
     },
-    async execute(args, exec) {
+    async execute(args: GlobToolArgs, exec) {
       const input = parseGlobArgs(args)
+      // Deny a root outside the calling session's data boundary (or an approved
+      // one-call widening) BEFORE anything spawns.
+      const widened = await sandbox.widenOnce('glob', args, exec)
+      if (!widened) await sandbox.assertRootInsideBoundary('glob', exec, input.path)
       const run = await runRipgrep(ctx, exec, 'glob', buildGlobCommand(input), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
       const root = input.path === undefined ? '.' : toWorkdirRelative(input.path, run.workdir)
       if (run.noMatches) return { root, paths: [] }

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -93,6 +93,39 @@ describe.skipIf(!seatbeltUsable)('sandbox-local: real Seatbelt confinement throu
     const denied = runConfined(sandbox, `echo hi > ${outside}/denied.txt`, { mode: 'workspace-write', workspaceRoot: workdir })
     expect(denied.result.status).not.toBe(0)
     expect(existsSync(join(outside, 'denied.txt'))).toBe(false)
+  })
+
+  it('a confined read boundary is real: an inside read passes and an outside read is denied in the advertised dialect', async () => {
+    const workdir = await tempDir(homedir())
+    const outside = await tempDir(homedir())
+    writeFileSync(join(workdir, 'inside.txt'), 'inside-ok')
+    writeFileSync(join(outside, 'outside.txt'), 'outside-secret')
+    const sandbox = await provider()
+    const policy: SandboxPolicy = { mode: 'read-only', workspaceRoot: workdir, readRoots: [] }
+
+    const inside = runConfined(sandbox, `cat ${workdir}/inside.txt`, policy)
+    expect(inside.result.status).toBe(0)
+    expect(inside.result.stdout).toBe('inside-ok')
+
+    // The empty boundary still reads the workspace and the platform roots a
+    // process needs, so the denial proves the read rules rather than a broken profile.
+    const denied = runConfined(sandbox, `cat ${outside}/outside.txt`, policy)
+    expect(denied.result.status).not.toBe(0)
+    expect(denied.result.stdout).toBe('')
+    expect(denied.result.stderr.toLowerCase()).toContain('operation not permitted')
+  })
+
+  it('a confined read boundary keeps the workspace writable under workspace-write', async () => {
+    const workdir = await tempDir(homedir())
+    const sandbox = await provider()
+    const { result } = runConfined(
+      sandbox,
+      `printf confined-ok > ${workdir}/written.txt && cat ${workdir}/written.txt`,
+      { mode: 'workspace-write', workspaceRoot: workdir, readRoots: [] },
+    )
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('confined-ok')
+    expect(readFileSync(join(workdir, 'written.txt'), 'utf8')).toBe('confined-ok')
   })
 
   it('workspace-write grants /tmp and the user temp dir (the documented Seatbelt-profile temp areas)', async () => {

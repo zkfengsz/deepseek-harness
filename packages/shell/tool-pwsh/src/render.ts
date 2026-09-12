@@ -12,7 +12,14 @@
 
 import type { ShellProcessRead, ShellSandboxInfo, CollectedOutput } from '@deepseek-ai/dsh-shell'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sandbox'
+import { READ_ESCALATION_TARGET, escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sandbox'
+
+/**
+ * One value a tool advertises in its `sandbox_permissions` enum: a wider write
+ * mode, or the read target that lifts a data boundary for one call. Rendering
+ * asks only whether anything is advertised; the schema carries the values.
+ */
+export type EscalationTarget = SandboxMode | typeof READ_ESCALATION_TARGET
 
 /* jscpd:ignore-start -- deliberate twin of dsh-tool-bash/render.ts (Agent Note). */
 
@@ -45,7 +52,7 @@ export interface RenderablePwshResult {
  */
 export function renderPwshResult(
   result: RenderablePwshResult,
-  escalationModes: readonly SandboxMode[] = [],
+  escalationModes: readonly EscalationTarget[] = [],
 ): string {
   const out = streamText(result.stdout)
   const err = streamText(result.stderr)
@@ -92,7 +99,7 @@ export function renderPwshResult(
 export function renderPwshProcessRead(
   read: ShellProcessRead,
   sandbox?: ShellSandboxInfo,
-  escalationModes: readonly SandboxMode[] = [],
+  escalationModes: readonly EscalationTarget[] = [],
 ): string {
   const notices: string[] = []
   if (read.lossy) {

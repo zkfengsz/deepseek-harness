@@ -40,12 +40,16 @@ kind: "package-reference"
   config:
     mode: workspace-write
     workspaceRoot: /absolute/path/to/workspace
+    confineReads: true
+    readRoots: [/absolute/path/to/skills]
 ```
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `mode` | `read-only` | 会话起始的部署默认模式，加载时验证 |
 | `workspaceRoot` | `process.cwd()` | 无 agent 调用或没有 cwd 的会话在 `workspace-write` 下可写入的回退根目录；普通 agent 调用改用会话的不可变 cwd |
+| `confineReads` | `false` | 会话的读取是否止于它自己的工作区；关闭时保持此前的"读取不受限" |
+| `readRoots` | `[]` | 受限会话可额外读取的根——它的技能目录、它运行的工具栏；仅在 `confineReads` 开启时生效 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-sandbox-policy)是每个受支持字段及其 JSDoc 的穷尽式真源。
 

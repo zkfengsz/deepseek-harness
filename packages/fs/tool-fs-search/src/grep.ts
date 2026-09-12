@@ -18,6 +18,7 @@ import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import type { GrepMatch } from './search-core.ts'
 import { SearchError, previewLine, retainGrepMatches, runRipgrep, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
+import type { SearchSandbox } from './sandbox.ts'
 import { grepSearchMeta, searchViewFromMeta } from './presentation.ts'
 import { acceptedDirectCallValue } from './direct-call.ts'
 
@@ -57,6 +58,15 @@ export interface GrepInput {
   pattern: string
   path?: string
   include?: string
+}
+
+/**
+ * The `grep` tool's raw arguments: {@link GrepInput} plus the two escalation
+ * fields, advertised only while this deployment confines its sessions' reads.
+ */
+interface GrepToolArgs extends GrepInput {
+  sandbox_permissions?: string
+  justification?: string
 }
 
 /**
@@ -270,8 +280,9 @@ export function presentGrepResult(
  * @param ctx - the plugin context; registrations are effects scoped to it, and
  *   execution uses its `subprocess` service.
  * @param caps - the deployment's resolved grep caps (plugin config after defaulting).
+ * @param sandbox - the read-boundary API (advertisement, root check, approved one-call widening).
  */
-export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
+export function applyGrepTool(ctx: Context, caps: GrepToolCaps, sandbox: SearchSandbox): void {
   ctx.systemPrompt.section({
     name: 'tool:grep',
     order: ctx.systemPrompt.getSectionOrder('TOOL_GREP'),
@@ -290,6 +301,7 @@ export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
       pattern: { type: 'string', required: true, description: 'Regular expression to search for (ripgrep syntax).' },
       path: { type: 'string', description: 'File or directory to search. Defaults to the session workspace; a relative path resolves against it.' },
       include: { type: 'string', description: 'One glob filter for which files to search (e.g. "*.ts", "*.{js,jsx}"). Not a list; negation is not supported.' },
+      ...sandbox.readEscalationModes.length > 0 ? sandbox.schemaFields() : {},
     },
     timeoutMs: caps.timeoutMs,
     output: {
@@ -319,8 +331,12 @@ export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
       presentationMeta: (_args, value) =>
         grepSearchMeta(retainGrepMatches(value.matches, caps.maxMatches, caps.maxLineBytes), caps.maxMetaBytes),
     },
-    async execute(args, exec) {
+    async execute(args: GrepToolArgs, exec) {
       const input = parseGrepArgs(args)
+      // Deny a root outside the calling session's data boundary (or an approved
+      // one-call widening) BEFORE anything spawns.
+      const widened = await sandbox.widenOnce('grep', args, exec)
+      if (!widened) await sandbox.assertRootInsideBoundary('grep', exec, input.path)
       const run = await runRipgrep(ctx, exec, 'grep', buildGrepCommand(input), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
       if (run.noMatches) return { matches: [] }
 

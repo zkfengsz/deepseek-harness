@@ -15,6 +15,15 @@ import { applyReadImageTool } from './read-image.ts'
 import { READ_MAX_BYTES, READ_MAX_LINE_LENGTH } from './read-render.ts'
 import { FsSandboxController } from './sandbox.ts'
 
+export {
+  FsSandboxController,
+  approveReadWidening,
+  readDenialMarker,
+  readEscalationHint,
+  readEscalationSchemaFields,
+} from './sandbox.ts'
+export type { EscalationSchemaFields, FsEscalationArgs } from './sandbox.ts'
+
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'tool-fs'
 
@@ -58,22 +67,25 @@ export function apply(ctx: Context, config: Config): void {
   assertPositiveInteger('readMaxLineLength', resolved.readMaxLineLength)
   assertPositiveInteger('readMaxBytes', resolved.readMaxBytes)
   assertPositiveInteger('readStreamMinSize', resolved.readStreamMinSize)
+  // One escalation API shared by every fs tool: advertisement gating, per-call
+  // policy resolution, the approved one-call widening (a wider WRITE mode for
+  // write/edit, the read widening for the reading tools), and denial-marker
+  // mapping. It is keyed off whether the mounted ctx.fs confines
+  // (ctx.fs.sandboxMode) and whether this deployment confines reads
+  // (ctx.sandboxPolicy.confineReads).
+  const sandbox = new FsSandboxController(ctx)
   applyReadTool(ctx, {
     limit: resolved.readLimit,
     maxLineLength: resolved.readMaxLineLength,
     maxBytes: resolved.readMaxBytes,
     streamMinSize: resolved.readStreamMinSize,
-  })
+  }, sandbox)
   // read_image is composition-conditional: without a mounted attachment store
   // the deployment cannot durably commit image bytes, so the tool never
   // registers; the execute body keeps a defensive re-check for direct callers.
   ctx.inject(['attachments'], (imageCtx) => {
-    applyReadImageTool(imageCtx)
+    applyReadImageTool(imageCtx, sandbox)
   })
-  // One escalation API shared by both mutating tools: advertisement gating,
-  // per-call policy resolution, and denial-marker mapping, all keyed off whether
-  // the mounted ctx.fs confines (ctx.fs.sandboxMode).
-  const sandbox = new FsSandboxController(ctx)
   applyWriteTool(ctx, sandbox)
   applyEditTool(ctx, sandbox)
 }

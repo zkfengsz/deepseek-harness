@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use `dsh-tool-fs-search` to give models `glob` file discovery and `grep` content search over a local workspace. Searches need no host `rg` installation or filesystem provider, return workdir-relative results, and include hidden and ignored files while excluding VCS metadata. Configurable caps bound inline output; with an optional spill store, capped results remain fully recoverable. Choose the sibling `dsh-tool-fs` package for reading, writing, or editing files.
+Use `dsh-tool-fs-search` to give models `glob` file discovery and `grep` content search over a local workspace. Searches need no host `rg` installation or filesystem provider, return workdir-relative results, and include hidden and ignored files while excluding VCS metadata. A deployment that confines its sessions' reads also confines every search root to the same boundary, with one approved `read-anywhere` retry. Configurable caps bound inline output; with an optional spill store, capped results remain fully recoverable. Choose the sibling `dsh-tool-fs` package for reading, writing, or editing files.
 
 ## Table of Contents
 
@@ -50,6 +50,10 @@ A subprocess backend, then the tools; the spill backend is optional and makes ca
 
 Routine budgets stay out of the model-facing schema: a model that needs surrounding context reads the matched file with `read`, and one that needs later results follows the returned spill locator's retrieval hint.
 
+### The session read boundary
+
+While the deployment sets `sandboxPolicy.confineReads`, each search checks its root BEFORE spawning: the root must be one of the roots `readRootsFor` derives for the calling session (its workspace, the deployment's configured read roots, and the platform roots a process needs to run), compared with the containment test `ctx.fs` exposes. An unspecified root is the session workspace, which is always inside. A refused search returns `[sandbox: file read denied outside this session's data boundary]` plus a hint naming `sandbox_permissions: "read-anywhere"`; both tools advertise that argument and `justification` only while reads are confined, and an approved retry lets that one search through. A deployment that composes no filesystem cannot prove containment for a confined session and fails closed instead of searching the host. The deployment fact is `ctx.sandboxPolicy`; an agent-less call is never confined, so harness-side searches keep working.
+
 ### Configuration
 
 `sampleOverCapGlobResults` is required; the remaining keys are optional search caps with the defaults below.
@@ -74,7 +78,7 @@ Node deployments receive the `@vscode/ripgrep` platform package on supported mac
 
 ### Failures and recovery
 
-Search failures carry the package-owned codes `SEARCH_INVALID_PATTERN` (ripgrep rejected the regex or glob), `SEARCH_FAILED` (a failed launch, inaccessible target, signal kill, or malformed `--json` output), `SEARCH_RAW_OUTPUT_OVERFLOW` (raw output over the cap), and `SEARCH_ABORTED` (cooperative timeout or caller cancellation). Exit 0 is success with results and exit 1 is a successful empty search; model argument mistakes stay ordinary tool argument errors.
+Search failures carry the package-owned codes `SEARCH_INVALID_PATTERN` (ripgrep rejected the regex or glob), `SEARCH_FAILED` (a failed launch, inaccessible target, signal kill, or malformed `--json` output), `SEARCH_RAW_OUTPUT_OVERFLOW` (raw output over the cap), `SEARCH_ABORTED` (cooperative timeout or caller cancellation), and `SEARCH_DENIED` (the search root lies outside the calling session's data boundary, or the deployment cannot prove it does not). Exit 0 is success with results and exit 1 is a successful empty search; model argument mistakes stay ordinary tool argument errors.
 
 -----
 
@@ -194,7 +198,7 @@ Append-only; newly visible content follows the reusable request prefix and does 
 
 #### What the model sees
 
-Failures are normalized as `Error: <message>` with structured `SEARCH_INVALID_PATTERN`, `SEARCH_FAILED`, `SEARCH_RAW_OUTPUT_OVERFLOW`, or `SEARCH_ABORTED` metadata for callers.
+Failures are normalized as `Error: <message>` with structured `SEARCH_INVALID_PATTERN`, `SEARCH_FAILED`, `SEARCH_RAW_OUTPUT_OVERFLOW`, `SEARCH_ABORTED`, or `SEARCH_DENIED` metadata for callers.
 
 #### Token effect
 
@@ -214,6 +218,7 @@ These limits define when the search tools are a poor fit or need special operati
 - **Search and file access have no shared-workspace proof** — returned paths are follow-up-readable only when the workdir and filesystem root denote the same workspace; the package performs no runtime cross-service validation.
 - **The packaged binary is fixed at dependency version** — Node deployments use the version selected by `@vscode/ripgrep`; Python single-file runtimes copy that target-native version into the required `-rg` sidecar. An unsupported platform or a corrupted installation fails with `SEARCH_FAILED`, while the Python runtime package rejects a missing sidecar before launch. Remote or virtual filesystems need a co-located workspace or another search consumer.
 - **The schemas expose one bounded page** — offset pagination, case-mode switches, alternate output modes, and provider-backed discovery remain outside this package; capped complete output requires a spill backend.
+- **The read boundary checks the search root, not every file ripgrep opens** — a root inside the boundary whose subtree holds a symbolic link pointing out is not re-examined per file, because ripgrep reads through its own process rather than `ctx.fs`; the harness's own read tools do canonicalize each file they open.
 - **Sampling, when enabled, groups by first path segment beneath the search root only** — an over-cap `glob` page balances across those top-level entries, so a result concentrated deeper is still shown unevenly below that level; recursive balancing is deferred.
 
 <a id="dev-note"></a>

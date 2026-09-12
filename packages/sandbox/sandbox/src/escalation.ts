@@ -41,6 +41,23 @@ export const WIDER_MODES: Record<string, readonly SandboxMode[]> = {
 export const ESCALATION_TARGETS: readonly SandboxMode[] = ['workspace-write', 'danger-full-access']
 
 /**
+ * The read-widening target: the one escalation value that opens READS beyond a
+ * data boundary and changes nothing about writes. A write mode cannot express
+ * it, because approving one out-of-boundary read must not also hand the call
+ * an unfenced write — so it travels as its own value in the same enum and is
+ * advertised only when the mount actually confines reads.
+ */
+export const READ_ESCALATION_TARGET = 'read-anywhere'
+
+/**
+ * One approved widening, consumed by the single call that asked for it: a
+ * wider WRITE mode, or the read boundary lifted for that call alone.
+ */
+export type SandboxEscalationGrant =
+  | { readonly kind: 'mode'; readonly mode: SandboxMode }
+  | { readonly kind: 'read' }
+
+/**
  * Validate the escalation argument pairing a tool schema cannot express:
  * `sandbox_permissions` and `justification` travel together — an approval
  * prompt without a reason, or a reason driving nothing, is a malformed ask —
@@ -138,6 +155,8 @@ export interface EscalationRequest {
   effectiveMode: SandboxMode
   /** The family's noun for the escalated action in user-facing texts (`command` for bash, `operation` for fs). */
   subject: string
+  /** Whether this call's reads are confined to a data boundary — the precondition for {@link READ_ESCALATION_TARGET}. */
+  readsConfined?: boolean
 }
 
 /**
@@ -152,14 +171,23 @@ export interface EscalationRequest {
  * non-widening request never prompts a human.
  * @param request - the escalation to judge (see {@link EscalationRequest}).
  * @param approval - the approval ingredients the tool holds (see {@link EscalationApproval}).
- * @returns the granted mode, consumed by the one call that asked.
+ * @returns the granted widening, consumed by the one call that asked.
  */
-export async function approveEscalation<A, C>(request: EscalationRequest, approval: EscalationApproval<A, C>): Promise<SandboxMode> {
+export async function approveEscalation<A, C>(
+  request: EscalationRequest,
+  approval: EscalationApproval<A, C>,
+): Promise<SandboxEscalationGrant> {
   const { requestedMode: mode, effectiveMode, justification, subject } = request
-  // Strict widening is an EXECUTION check against the call's effective mode —
+  const widensReads = mode === READ_ESCALATION_TARGET
+  // Strict widening is an EXECUTION check against the call's effective policy —
   // deliberately not a schema constraint (the enum is the closed target
-  // vocabulary; the effective mode is per-call truth).
-  if (!(WIDER_MODES[effectiveMode] ?? []).includes(mode as SandboxMode)) {
+  // vocabulary; the effective policy is per-call truth). The read target
+  // widens a boundary, not a mode, so its precondition is the boundary itself.
+  if (widensReads) {
+    if (request.readsConfined !== true) {
+      throw new Error(`sandbox escalation to "${mode}" needs a call whose reads are confined to a data boundary`)
+    }
+  } else if (!(WIDER_MODES[effectiveMode] ?? []).includes(mode as SandboxMode)) {
     throw new Error(`sandbox escalation to "${mode}" is not strictly wider than this call's current "${effectiveMode}" mode`)
   }
   if (approval.approver === undefined) {
@@ -179,8 +207,8 @@ export async function approveEscalation<A, C>(request: EscalationRequest, approv
   })
   switch (outcome) {
     // The schema enum already pinned `mode` to the closed target vocabulary;
-    // the check above proved it is strictly wider.
-    case 'allowed-once': return mode as SandboxMode
+    // the checks above proved it widens what this call runs under.
+    case 'allowed-once': return widensReads ? { kind: 'read' } : { kind: 'mode', mode: mode as SandboxMode }
     case 'rejected': throw new Error(`the user rejected escalating this ${subject} to "${mode}"`)
     case 'cancelled': throw new Error(`approval for escalating to "${mode}" was cancelled`)
     case 'unavailable': throw new Error(`sandbox escalation to "${mode}" requires approval, but no approval channel is available`)

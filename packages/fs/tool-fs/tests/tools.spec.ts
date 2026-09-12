@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import AgentRegistry from '@deepseek-ai/dsh-agent'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { type ToolResult } from '@deepseek-ai/dsh-tools'
 import { FileSystem, FsError, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
@@ -767,6 +768,57 @@ describe('read caps are plugin config', () => {
   })
 })
 
+/** One fake agent and one schema reader shared by the fs escalation suites. */
+/** A fake agent whose session records appends (the approval audit trail), mid-turn, carrying the given events for the fold. */
+function escalationAgent(records: Array<{ type: string; data?: Record<string, unknown> }> = []): object {
+  const id = SessionId('sess-fs-esc')
+  const events: Array<{
+    type: string
+    seq: ReturnType<typeof SessionSeq>
+    time: number
+    data: Record<string, unknown>
+  }> = [
+    { type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } },
+    ...records.map((record, index) => ({
+      type: record.type,
+      seq: SessionSeq(index + 1),
+      time: index + 1,
+      data: record.data ?? {},
+    })),
+  ]
+  return {
+    id,
+    session: {
+      id,
+      header: { version: 0, id, createdAt: 0, cwd: '/session-project', isSeeded: false },
+      inheritedEventCount: SessionLogOffset(0),
+      firstLiveSeq: SessionLogOffset(0),
+      get seq() { return SessionLogOffset(events.length) },
+      eventAt: (seq: ReturnType<typeof SessionSeq>) => events[seq],
+      snapshotEvents: (
+        fromSeq = SessionLogOffset(0),
+        toSeqExclusive = SessionLogOffset(events.length),
+      ) => events.slice(fromSeq, toSeqExclusive),
+      append: (type: string, data: Record<string, unknown>) => {
+        const event = {
+          type,
+          seq: SessionSeq(events.length),
+          time: events.length,
+          data,
+        }
+        events.push(event)
+        return event
+      },
+    },
+  }
+}
+
+function fsSchema(ctx: Context, name: 'write' | 'edit' | 'read') {
+  const schema = ctx.tools.schemas().find(s => s.name === name)
+  if (!schema) throw new Error(`${name} tool not registered`)
+  return schema as unknown as { parameters: { properties: Record<string, { enum?: string[] }> } }
+}
+
 describe('sandbox escalation API (write/edit)', () => {
   /** A confining fake `ctx.fs`: reports a default mode, records each per-call policy, and can arm a sandbox denial. */
   class SandboxingFakeFs extends FakeFs {
@@ -810,55 +862,6 @@ describe('sandbox escalation API (write/edit)', () => {
     return { ctx, fs: ctx.fs as SandboxingFakeFs }
   }
 
-  /** A fake agent whose session records appends (the approval audit trail), mid-turn, carrying the given events for the fold. */
-  function escalationAgent(records: Array<{ type: string; data?: Record<string, unknown> }> = []): object {
-    const id = SessionId('sess-fs-esc')
-    const events: Array<{
-      type: string
-      seq: ReturnType<typeof SessionSeq>
-      time: number
-      data: Record<string, unknown>
-    }> = [
-      { type: 'turn/start', seq: SessionSeq(0), time: 0, data: { turn: 1 } },
-      ...records.map((record, index) => ({
-        type: record.type,
-        seq: SessionSeq(index + 1),
-        time: index + 1,
-        data: record.data ?? {},
-      })),
-    ]
-    return {
-      id,
-      session: {
-        id,
-        header: { version: 0, id, createdAt: 0, cwd: '/session-project', isSeeded: false },
-        inheritedEventCount: SessionLogOffset(0),
-        firstLiveSeq: SessionLogOffset(0),
-        get seq() { return SessionLogOffset(events.length) },
-        eventAt: (seq: ReturnType<typeof SessionSeq>) => events[seq],
-        snapshotEvents: (
-          fromSeq = SessionLogOffset(0),
-          toSeqExclusive = SessionLogOffset(events.length),
-        ) => events.slice(fromSeq, toSeqExclusive),
-        append: (type: string, data: Record<string, unknown>) => {
-          const event = {
-            type,
-            seq: SessionSeq(events.length),
-            time: events.length,
-            data,
-          }
-          events.push(event)
-          return event
-        },
-      },
-    }
-  }
-
-  function fsSchema(ctx: Context, name: 'write' | 'edit') {
-    const schema = ctx.tools.schemas().find(s => s.name === name)
-    if (!schema) throw new Error(`${name} tool not registered`)
-    return schema as unknown as { parameters: { properties: Record<string, { enum?: string[] }> } }
-  }
 
   it('fails load when a confining filesystem has no shared sandbox-policy resolver', async () => {
     const ctx = new Context()
@@ -977,6 +980,217 @@ describe('sandbox escalation API (write/edit)', () => {
   it('sandbox_permissions under a non-confining backend fails closed (unadvertised field still reaches execute)', async () => {
     const { ctx } = await setup()
     const result = await call(ctx, 'write', { file_path: 'a.txt', content: 'x', sandbox_permissions: 'workspace-write', justification: 'why' }, escalationAgent())
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('not available in this composition')
+  })
+})
+
+describe('sandbox read escalation (the approved one-call read widening)', () => {
+  /**
+   * A confining fake `ctx.fs` that fences reads the way `dsh-fs-sandbox` does:
+   * an observing read of a path outside the boundary is denied while an agent
+   * initiates the call, and allowed when the call is agent-less — which is
+   * exactly the path an approved widening takes.
+   */
+  class ReadConfinedFakeFs extends FakeFs {
+    stamped: (SandboxExecutionPolicy | undefined)[] = []
+    readonly outside = new Set<string>()
+
+    override get sandboxMode(): SandboxMode {
+      return 'workspace-write'
+    }
+
+    /** The read fence: outside keys are unreadable while an agent initiates this call. */
+    private fenceRead(target: FsTarget): void {
+      if (this.ctx.get('agents')?.currentInitiator() === undefined) return
+      if (!this.outside.has(String(target.targetKey))) return
+      throw new FsError(`cannot read "${target.displayPath}": file access denied outside this session's data boundary`, 'FS_SANDBOX_DENIED')
+    }
+
+    override async stat(target: FsTarget): Promise<FsInfo | undefined> {
+      this.fenceRead(target)
+      return super.stat(target)
+    }
+
+    override async readText(target: FsTarget): Promise<string> {
+      this.fenceRead(target)
+      return super.readText(target)
+    }
+
+    override async writeText(
+      target: FsTarget,
+      content: string,
+      expected?: FsWriteIntent,
+      _signal?: AbortSignal,
+      sandboxPolicy?: SandboxExecutionPolicy,
+    ): Promise<FsWriteOutcome> {
+      this.stamped.push(sandboxPolicy)
+      return super.writeText(target, content, expected)
+    }
+  }
+
+  async function setupReadConfined(opts: { approval?: boolean; confineReads?: boolean; agents?: boolean } = {}) {
+    const ctx = new Context()
+    await ctx.plugin(SystemPrompt)
+    await ctx.plugin(ToolRuntime)
+    await ctx.plugin(SessionProjectionRegistry)
+    ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
+    await ctx.plugin(SandboxPolicyService, {
+      mode: 'workspace-write',
+      ...opts.confineReads === true ? { confineReads: true } : {},
+    })
+    if (opts.agents !== false) await ctx.plugin(AgentRegistry)
+    await ctx.plugin(ReadConfinedFakeFs)
+    await ctx.plugin(FsPolicy)
+    if (opts.approval === true) await ctx.plugin(ApprovalService)
+    await ctx.plugin(ToolFs)
+    const fs = ctx.fs as ReadConfinedFakeFs
+    fs.files.set('key:inside.txt', 'inside')
+    fs.files.set('key:outside.txt', 'outside')
+    fs.outside.add('key:outside.txt')
+    return { ctx, fs }
+  }
+
+  /** Run one tool call as the initiating agent, which is what the read boundary is resolved from. */
+  function asCaller<T>(ctx: Context, operation: () => T): T {
+    return ctx.agents.withInitiator(escalationAgent() as never, operation)
+  }
+
+  it('advertises the read widening only where the deployment confines reads', async () => {
+    const open = await setupReadConfined()
+    expect(fsSchema(open.ctx, 'read').parameters.properties['sandbox_permissions']).toBeUndefined()
+    expect(fsSchema(open.ctx, 'read').parameters.properties['justification']).toBeUndefined()
+    const confined = await setupReadConfined({ confineReads: true })
+    expect(fsSchema(confined.ctx, 'read').parameters.properties['sandbox_permissions']?.enum).toEqual(['read-anywhere'])
+    expect(fsSchema(confined.ctx, 'read').parameters.properties['justification']).toBeDefined()
+  })
+
+  it('denies an outside read and maps it to the read marker plus the read retry hint', async () => {
+    const { ctx } = await setupReadConfined({ confineReads: true })
+    const result = await asCaller(ctx, () => call(ctx, 'read', { file_path: 'outside.txt' }, escalationAgent()))
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain("[sandbox: file read denied outside this session's data boundary]")
+    expect(text(result)).toContain('[sandbox: escalation available — retry this exact read once with sandbox_permissions: "read-anywhere"')
+  })
+
+  it('reads inside the boundary without any escalation', async () => {
+    const { ctx } = await setupReadConfined({ confineReads: true })
+    const result = await asCaller(ctx, () => call(ctx, 'read', { file_path: 'inside.txt' }, escalationAgent()))
+    expect(result.isError).toBe(false)
+    expect(text(result)).toContain('inside')
+  })
+
+  it('an approved widening reads the outside path for that call only and leaves the write mode untouched', async () => {
+    const { ctx, fs } = await setupReadConfined({ approval: true, confineReads: true })
+    ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
+    const result = await asCaller(ctx, () => call(ctx, 'read', {
+      file_path: 'outside.txt',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'the record this session must compare lives outside its workspace',
+    }, escalationAgent()))
+    expect(result.isError).toBe(false)
+    expect(text(result)).toContain('outside')
+    // One call only: the next mutation still runs under the standing mode, so
+    // lifting the read boundary never widened what this session may write.
+    await asCaller(ctx, () => call(ctx, 'write', { file_path: 'written.txt', content: 'x' }, escalationAgent()))
+    expect(fs.stamped.at(-1)).toMatchObject({ mode: 'workspace-write', workspaceRoot: resolve('/session-project') })
+  })
+
+  it('a rejected widening fails closed and reads nothing outside the boundary', async () => {
+    const { ctx, fs } = await setupReadConfined({ approval: true, confineReads: true })
+    ctx.on('approval/request', () => Promise.resolve('rejected' as const))
+    const result = await asCaller(ctx, () => call(ctx, 'read', {
+      file_path: 'outside.txt',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }, escalationAgent()))
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('the user rejected escalating this read to "read-anywhere"')
+    expect(fs.files.get('key:outside.txt')).toBe('outside')
+  })
+
+  it('a widening with no approval channel fails closed', async () => {
+    const { ctx } = await setupReadConfined({ confineReads: true })
+    const result = await asCaller(ctx, () => call(ctx, 'read', {
+      file_path: 'outside.txt',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }, escalationAgent()))
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('no approval service is composed')
+  })
+
+  it('a widening with no calling agent fails closed (an agent-less call has no boundary to lift)', async () => {
+    const { ctx } = await setupReadConfined({ approval: true, confineReads: true })
+    const result = await asCaller(ctx, () => call(ctx, 'read', {
+      file_path: 'outside.txt',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }))
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('needs a call whose reads are confined to a data boundary')
+  })
+
+  it('refuses the read target where the deployment confines no reads', async () => {
+    const { ctx } = await setupReadConfined({ approval: true })
+    ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
+    const result = await asCaller(ctx, () => call(ctx, 'read', {
+      file_path: 'outside.txt',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }, escalationAgent()))
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('needs a call whose reads are confined to a data boundary')
+  })
+
+  it('refuses a write mode as a read widening without asking the user', async () => {
+    // The read fields are unadvertised where reads are open, so a write mode
+    // reaches execute and meets the read precondition rather than an enum.
+    const { ctx } = await setupReadConfined({ approval: true })
+    const asked: unknown[] = []
+    ctx.on('approval/request', (request) => {
+      asked.push(request)
+      return Promise.resolve('allowed-once' as const)
+    })
+    const result = await asCaller(ctx, () => call(ctx, 'read', {
+      file_path: 'outside.txt',
+      sandbox_permissions: 'danger-full-access',
+      justification: 'why',
+    }, escalationAgent()))
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain("is a write mode and does not lift this session's read boundary")
+    expect(asked).toEqual([])
+  })
+
+  it('fails closed when an approved widening cannot hide the boundary (no agent registry)', async () => {
+    const { ctx } = await setupReadConfined({ approval: true, confineReads: true, agents: false })
+    ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
+    const result = await call(ctx, 'read', {
+      file_path: 'outside.txt',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }, escalationAgent())
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('no ctx.agents to lift the boundary for one call')
+  })
+
+  it('rejects the escalation argument pairing on a read', async () => {
+    const { ctx } = await setupReadConfined({ confineReads: true })
+    const result = await asCaller(ctx, () => call(ctx, 'read', {
+      file_path: 'inside.txt',
+      sandbox_permissions: 'read-anywhere',
+    }, escalationAgent()))
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('sandbox_permissions requires a justification')
+  })
+
+  it('an unadvertised read widening under a non-confining backend fails closed', async () => {
+    const { ctx } = await setup()
+    const result = await call(ctx, 'read', {
+      file_path: 'a.txt',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'why',
+    }, escalationAgent())
     expect(result.isError).toBe(true)
     expect(text(result)).toContain('not available in this composition')
   })

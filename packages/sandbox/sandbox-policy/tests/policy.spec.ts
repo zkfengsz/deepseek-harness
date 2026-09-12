@@ -15,7 +15,12 @@ import SandboxPolicyService, { SANDBOX_MODES, setSandboxMode } from '@deepseek-a
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt, { renderContextSnapshot, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 
-async function mounted(config: { mode?: 'read-only' | 'workspace-write' | 'danger-full-access'; workspaceRoot?: string } = {}) {
+async function mounted(config: {
+  mode?: 'read-only' | 'workspace-write' | 'danger-full-access'
+  workspaceRoot?: string
+  confineReads?: boolean
+  readRoots?: string[]
+} = {}) {
   const ctx = new Context()
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SandboxPolicyService, config)
@@ -61,6 +66,41 @@ describe('SandboxPolicyService', () => {
       mode: 'workspace-write',
       workspaceRoot: resolve('/fallback'),
     })
+  })
+
+  it('carries the read boundary on a confined session and never on an agentless call', async () => {
+    const ctx = await mounted({
+      mode: 'workspace-write', workspaceRoot: '/fallback', confineReads: true, readRoots: ['/deploy/skills'],
+    })
+    const active = session('sess-confined', '/projects/confined')
+
+    // The boundary answers "what may THIS session see"; the harness reading
+    // its own machinery is not a session, so it stays unconfined.
+    expect(ctx.sandboxPolicy.resolve({ session: active }).readRoots).toEqual(['/deploy/skills'])
+    expect(ctx.sandboxPolicy.resolve()).toEqual({
+      mode: 'workspace-write',
+      workspaceRoot: resolve('/fallback'),
+    })
+  })
+
+  it('leaves reads unconfined unless the deployment turns the boundary on', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-policy-'))
+    try {
+      const off = await mounted({ mode: 'workspace-write', workspaceRoot: root, readRoots: ['/deploy/skills'] })
+      const on = await mounted({ mode: 'workspace-write', workspaceRoot: root, confineReads: true })
+
+      // Naming roots without the flag is not a boundary: an empty `readRoots`
+      // and an absent one mean opposite things, so the flag carries the
+      // decision and the list only describes it.
+      expect(off.sandboxPolicy.resolve({ session: session('sess-off', root) }).readRoots).toBeUndefined()
+      expect(on.sandboxPolicy.resolve({ session: session('sess-on', root) }).readRoots).toEqual([])
+      // Tool schemas are composed at apply time, where no session exists, so
+      // the deployment fact is the only gate they can read.
+      expect(off.sandboxPolicy.confineReads).toBe(false)
+      expect(on.sandboxPolicy.confineReads).toBe(true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('resolves each session mode and cwd together without changing the fallback', async () => {
@@ -149,7 +189,12 @@ describe('SandboxPolicyService', () => {
 })
 
 describe('sandbox:policy request context', () => {
-  async function promptMounted(config: { mode?: 'read-only' | 'workspace-write' | 'danger-full-access'; workspaceRoot?: string } = {}): Promise<Context> {
+  async function promptMounted(config: {
+    mode?: 'read-only' | 'workspace-write' | 'danger-full-access'
+    workspaceRoot?: string
+    confineReads?: boolean
+    readRoots?: string[]
+  } = {}): Promise<Context> {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(SessionProjectionRegistry)
@@ -167,6 +212,20 @@ describe('sandbox:policy request context', () => {
     } as const
 
     expect(await policyContext(ctx, session(`sess-${mode}`, '/projects/../projects/current'))).toBe(expected[mode])
+  })
+
+  it('states the read boundary when one is enforced, and claims none when it is not', async () => {
+    const confined = await promptMounted({
+      mode: 'workspace-write', workspaceRoot: '/fallback', confineReads: true, readRoots: [],
+    })
+    const open = await promptMounted({ mode: 'workspace-write', workspaceRoot: '/fallback' })
+    const sessionId = (id: string) => session(id, '/projects/current')
+
+    expect(await policyContext(confined, sessionId('sess-confined')))
+      .toContain("Reads are confined to this session's data boundary")
+    // The unconfined text must not describe a boundary the deployment does not
+    // enforce: the model reads this line as its own reach.
+    expect(await policyContext(open, sessionId('sess-open'))).not.toContain('Reads are confined')
   })
 
   it('keeps the complete rendered prompt byte-stable across TMPDIR changes', async () => {

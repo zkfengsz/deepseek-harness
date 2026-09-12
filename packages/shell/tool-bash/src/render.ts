@@ -6,7 +6,14 @@
 
 import type { ShellProcessRead, ShellRunResult, ShellSandboxInfo, CollectedOutput } from '@deepseek-ai/dsh-shell'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sandbox'
+import { READ_ESCALATION_TARGET, escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sandbox'
+
+/**
+ * One value a tool advertises in its `sandbox_permissions` enum: a wider write
+ * mode, or the read target that lifts a data boundary for one call. Rendering
+ * asks only whether anything is advertised; the schema carries the values.
+ */
+export type EscalationTarget = SandboxMode | typeof READ_ESCALATION_TARGET
 
 /** Append the truncation notice (with the full-output spill path) to a stream's text. */
 function streamText(output: CollectedOutput): string {
@@ -27,7 +34,7 @@ function streamText(output: CollectedOutput): string {
  */
 export function renderResult(
   result: ShellRunResult,
-  escalationModes: readonly SandboxMode[] = [],
+  escalationModes: readonly EscalationTarget[] = [],
 ): string {
   const out = streamText(result.stdout)
   const err = streamText(result.stderr)
@@ -75,7 +82,7 @@ export function renderResult(
 export function renderProcessRead(
   read: ShellProcessRead,
   sandbox?: ShellSandboxInfo,
-  escalationModes: readonly SandboxMode[] = [],
+  escalationModes: readonly EscalationTarget[] = [],
 ): string {
   const notices: string[] = []
   if (read.lossy) {

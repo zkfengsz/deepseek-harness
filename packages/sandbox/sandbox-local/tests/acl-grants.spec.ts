@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { SANDBOX_UNAVAILABLE, SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { LocalSandboxProvider } from '@deepseek-ai/dsh-sandbox-local'
@@ -138,6 +139,34 @@ describe('windows-acl write grants (LocalSandboxProvider)', () => {
       await fiber.dispose()
       expect(mockState.grants.every(grant => grant.disposed)).toBe(true)
       expect(existsSync(tempDir ?? '')).toBe(false)
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('a policy that confines reads fails closed: the restricted token has no read rule to enforce it', async () => {
+    try {
+      const { sandbox } = await setup()
+      const ws = workspaceRoot()
+      scratch.push(ws)
+      const confinedReads: SandboxPolicy = {
+        mode: 'workspace-write',
+        workspaceRoot: ws,
+        sessionId: SessionId('confined-reads'),
+        readRoots: [],
+      }
+
+      let failure: unknown
+      try {
+        sandbox.confine(['true'], confinedReads)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toBeInstanceOf(SandboxUnavailableError)
+      expect(failure).toMatchObject({ code: SANDBOX_UNAVAILABLE })
+      expect(String(failure)).toContain('cannot enforce a read boundary')
+      // Nothing ran and no grant was materialized for a policy that never got a runner.
+      expect(mockState.grants).toEqual([])
     } finally {
       cleanup()
     }

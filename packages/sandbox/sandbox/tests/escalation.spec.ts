@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ESCALATION_TARGETS,
+  READ_ESCALATION_TARGET,
   WIDER_MODES,
   approveEscalation,
   escalationHintMarker,
@@ -26,6 +27,13 @@ describe('the strictly-wider ladder', () => {
 
   it('the target enum is the closed set every session could escalate TO (read-only is the floor)', () => {
     expect(ESCALATION_TARGETS).toEqual(['workspace-write', 'danger-full-access'])
+  })
+
+  it('the read target is its own value, outside the mode ladder', () => {
+    // A write mode cannot express "read this one file outside my boundary":
+    // approving that must not hand the call an unfenced write.
+    expect(ESCALATION_TARGETS).not.toContain(READ_ESCALATION_TARGET)
+    expect(Object.values(WIDER_MODES).flat()).not.toContain(READ_ESCALATION_TARGET)
   })
 })
 
@@ -77,7 +85,7 @@ describe('approveEscalation', () => {
   it('grants: returns the requested mode, asking through the approver with the audit reason', async () => {
     const seen: { reason?: string }[] = []
     const granted = await approveEscalation(req(), ingredients({ approver: approver('allowed-once', r => seen.push(r as { reason?: string })) }))
-    expect(granted).toBe('workspace-write')
+    expect(granted).toEqual({ kind: 'mode', mode: 'workspace-write' })
     expect(seen[0]?.reason).toBe('escalate sandbox to workspace-write: the user asked to write in the workspace')
   })
 
@@ -89,6 +97,34 @@ describe('approveEscalation', () => {
     await expect(approveEscalation(req({ requestedMode: 'workspace-write', effectiveMode: 'danger-full-access' as never }), spy))
       .rejects.toThrow(/not strictly wider/)
     expect(seen).toEqual([])
+  })
+
+  it('grants reads for one call only when the call itself is confined', async () => {
+    const seen: { reason?: string }[] = []
+    const granted = await approveEscalation(
+      req({ requestedMode: READ_ESCALATION_TARGET, readsConfined: true, subject: 'operation' }),
+      ingredients({ approver: approver('allowed-once', r => seen.push(r as { reason?: string })) }),
+    )
+
+    expect(granted).toEqual({ kind: 'read' })
+    expect(seen[0]?.reason).toBe(`escalate sandbox to ${READ_ESCALATION_TARGET}: the user asked to write in the workspace`)
+  })
+
+  it('refuses the read target on a call whose reads are not confined, and never asks', async () => {
+    const seen: unknown[] = []
+    const spy = ingredients({ approver: approver('allowed-once', r => seen.push(r)) })
+
+    // Widening a boundary that is not there would be an approval the user
+    // reads as meaningful while it changes nothing.
+    await expect(approveEscalation(req({ requestedMode: READ_ESCALATION_TARGET }), spy))
+      .rejects.toThrow(/needs a call whose reads are confined to a data boundary/)
+    expect(seen).toEqual([])
+  })
+
+  it('the read target still fails closed without an approval channel', async () => {
+    const read = req({ requestedMode: READ_ESCALATION_TARGET, readsConfined: true })
+    await expect(approveEscalation(read, ingredients({ approver: undefined }))).rejects.toThrow(/no approval service is composed/)
+    await expect(approveEscalation(read, ingredients({ agent: undefined }))).rejects.toThrow(/no agent to route it through/)
   })
 
   it('a missing approval service and an agent-less call each fail closed with distinct text', async () => {

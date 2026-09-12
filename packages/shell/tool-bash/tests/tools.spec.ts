@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
+import type { SandboxExecutionPolicy } from '@deepseek-ai/dsh-sandbox'
 import { ShellExecutor } from '@deepseek-ai/dsh-shell'
 import type { ShellExecRequest, ShellExecSpec, ShellProcess, ShellProcessRead, ShellRunResult } from '@deepseek-ai/dsh-shell'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -107,6 +108,10 @@ async function callUntilText(
 
 class RecordingSandboxExecutor extends ShellExecutor {
   readonly modes: Array<string | undefined> = []
+  /** Every resolved policy this executor was asked to run, in call order. */
+  readonly policies: SandboxExecutionPolicy[] = []
+  /** Whether the next runs report a policy denial. */
+  denied = false
 
   override get sandboxMode() {
     return 'read-only' as const
@@ -125,6 +130,7 @@ class RecordingSandboxExecutor extends ShellExecutor {
 
   run(spec: ShellExecSpec): Promise<ShellRunResult> {
     this.modes.push(spec.sandboxPolicy?.mode)
+    if (spec.sandboxPolicy !== undefined) this.policies.push(spec.sandboxPolicy)
     return Promise.resolve({
       exitCode: 0,
       signal: null,
@@ -135,7 +141,7 @@ class RecordingSandboxExecutor extends ShellExecutor {
       stderr: { text: '', truncated: false },
       sandbox: {
         mode: spec.sandboxPolicy?.mode ?? 'read-only',
-        denied: false,
+        denied: this.denied,
         ...spec.command === 'without optional sandbox facts'
           ? {}
           : { enforcement: 'full' as const, runnerFailed: false },
@@ -186,7 +192,7 @@ class CountingStartExecutor extends ShellExecutor {
   }
 }
 
-async function setupSandboxed(withApproval = false) {
+async function setupSandboxed(withApproval = false, policyConfig: { confineReads?: boolean; readRoots?: string[] } = {}) {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -195,7 +201,7 @@ async function setupSandboxed(withApproval = false) {
   await ctx.plugin(ToolTasks)
   await ctx.plugin(SessionProjectionRegistry)
   ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
-  await ctx.plugin(SandboxPolicyService, {})
+  await ctx.plugin(SandboxPolicyService, policyConfig)
   await ctx.plugin(RecordingSandboxExecutor)
   if (withApproval) await ctx.plugin(ApprovalService)
   await ctx.plugin(BashEnvPlugin)
@@ -726,6 +732,127 @@ describe('sandbox escalation through the generic task producer', () => {
     })
     expect((result.value as { sandbox: object }).sandbox).not.toHaveProperty('enforcement')
     expect((result.value as { sandbox: object }).sandbox).not.toHaveProperty('runnerFailed')
+  })
+
+  it('advertises read-anywhere only when the deployment confines reads', async () => {
+    const enumOf = (ctx: Context): string[] | undefined => {
+      const schema = ctx.tools.schemas().find(item => item.name === 'bash')!
+      const properties = schema.parameters.properties as Record<string, { enum?: string[] }>
+      return properties['sandbox_permissions']?.enum
+    }
+
+    const fieldOf = (ctx: Context): string | undefined => {
+      const schema = ctx.tools.schemas().find(item => item.name === 'bash')!
+      const properties = schema.parameters.properties as Record<string, { description?: string }>
+      return properties['sandbox_permissions']?.description
+    }
+
+    const plain = await setupSandboxed()
+    expect(enumOf(plain.ctx)).toEqual(['workspace-write', 'danger-full-access'])
+    // The prose and the field text teach the target exactly where the enum
+    // advertises it (and stay byte-identical to the write-ladder wording here).
+    expect(plain.ctx.tools.schemas().find(item => item.name === 'bash')!.description).not.toContain('read-anywhere')
+    expect(fieldOf(plain.ctx)).toBe(
+      'The wider sandbox mode this command needs. Only valid as a one-shot retry of a command the sandbox '
+      + 'just denied; requires justification and user approval.',
+    )
+
+    const confined = await setupSandboxed(false, { confineReads: true, readRoots: ['/data'] })
+    expect(enumOf(confined.ctx)).toEqual(['workspace-write', 'danger-full-access', 'read-anywhere'])
+    expect(confined.ctx.tools.schemas().find(item => item.name === 'bash')!.description).toContain(
+      "A READ denied by this session's data boundary escalates to `read-anywhere` instead: it opens reads "
+      + 'for that one call and grants no write permission, so a read the data boundary denied never justifies '
+      + 'a wider mode.',
+    )
+    expect(fieldOf(confined.ctx)).toContain('`read-anywhere` to open reads for this one call')
+  })
+
+  it('runs the granted read escalation with the boundary lifted and the mode unchanged', async () => {
+    const { ctx, bash } = await setupSandboxed(true, { confineReads: true, readRoots: ['/data'] })
+    ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('allowed-once'))
+    const agent = sandboxAgent('read-only', ctx)
+    ctx.agents.register(agent)
+    const read = { command: 'cat /data/ledger.csv', description: 'read the ledger', justification: 'the file sits outside the read boundary' }
+
+    // The standing policy carries the boundary; only the approved grant lifts it.
+    expect((await call(ctx, 'bash', { command: 'true', description: 'ordinary call' }, agent)).isError).toBe(false)
+    expect(bash.policies.map(policy => policy.readRoots)).toEqual([['/data']])
+
+    const escalated = await call(ctx, 'bash', { ...read, sandbox_permissions: 'read-anywhere' }, agent)
+    expect(escalated.isError).toBe(false)
+    expect(bash.policies.map(policy => policy.readRoots)).toEqual([['/data'], undefined])
+    expect(bash.policies[1]).toMatchObject({ mode: 'read-only' })
+    expect(bash.modes).toEqual(['read-only', 'read-only'])
+  })
+
+  it('keeps the read boundary when only a wider mode was granted', async () => {
+    const { ctx, bash } = await setupSandboxed(true, { confineReads: true, readRoots: ['/data'] })
+    ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('allowed-once'))
+    const agent = sandboxAgent('read-only', ctx)
+    ctx.agents.register(agent)
+
+    const result = await call(ctx, 'bash', {
+      command: 'mkdir -p /data/out',
+      description: 'write inside the boundary',
+      sandbox_permissions: 'workspace-write',
+      justification: 'the command needs workspace writes',
+    }, agent)
+
+    expect(result.isError).toBe(false)
+    expect(bash.policies[0]).toMatchObject({ mode: 'workspace-write', readRoots: ['/data'] })
+  })
+
+  it('refuses read-anywhere when this call has no confined reads, without prompting', async () => {
+    const { ctx, bash } = await setupSandboxed(true, { confineReads: true, readRoots: ['/data'] })
+    const prompted = vi.fn()
+    ctx.on('approval/request', () => { prompted(); return Promise.resolve<ApprovalOutcome>('allowed-once') })
+
+    // Agentless calls are resolved without a session, so they carry no read
+    // boundary: the deployment advertises the target while this call cannot use it.
+    const result = await call(ctx, 'bash', {
+      command: 'cat /data/ledger.csv',
+      description: 'read the ledger',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'the file sits outside the read boundary',
+    })
+
+    expect(text(result)).toContain('needs a call whose reads are confined to a data boundary')
+    expect(prompted).not.toHaveBeenCalled()
+    expect(bash.policies).toEqual([])
+
+    // Unadvertised in a composition that confines no reads: the argument check is the first gate.
+    const unconfined = await setupSandboxed(true)
+    const rejected = await call(unconfined.ctx, 'bash', {
+      command: 'cat /data/ledger.csv',
+      description: 'read the ledger',
+      sandbox_permissions: 'read-anywhere',
+      justification: 'the file sits outside the read boundary',
+    })
+    expect(rejected.isError).toBe(true)
+    expect(text(rejected)).toContain('must be one of')
+    expect(unconfined.bash.policies).toEqual([])
+  })
+
+  it('reports a read denial through the marker and lifts the boundary for the approved retry', async () => {
+    const { ctx, bash } = await setupSandboxed(true, { confineReads: true, readRoots: ['/data'] })
+    const agent = sandboxAgent('read-only', ctx)
+    ctx.agents.register(agent)
+    const read = { command: 'cat /elsewhere/report.csv', description: 'read a file outside the boundary' }
+
+    bash.denied = true
+    const denied = await call(ctx, 'bash', read, agent)
+    expect(text(denied)).toContain('[sandbox: file access denied under read-only mode]')
+    expect(text(denied)).toContain('[sandbox: escalation available')
+
+    bash.denied = false
+    ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('allowed-once'))
+    const retried = await call(ctx, 'bash', {
+      ...read,
+      sandbox_permissions: 'read-anywhere',
+      justification: 'the file sits outside the read boundary',
+    }, agent)
+    expect(retried.isError).toBe(false)
+    expect(bash.policies.map(policy => policy.readRoots)).toEqual([['/data'], undefined])
   })
 
   it('keeps the exhaustiveness backstop for a rogue approval implementation', async () => {

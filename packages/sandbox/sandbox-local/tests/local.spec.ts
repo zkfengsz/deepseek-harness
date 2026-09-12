@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { LAUNCHER_FAILURE_EXIT } from '@deepseek-ai/node-addon-system/landlock-run'
-import { SANDBOX_UNAVAILABLE, SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
+import { SANDBOX_UNAVAILABLE, SandboxUnavailableError, readRootsFor, writableRoots } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
 import {
   LocalSandboxProvider,
@@ -23,6 +23,13 @@ import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from '../s
 
 const RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws' }
 const WW: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws' }
+const CONFINED_RO: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws', readRoots: ['/data'] }
+const CONFINED_WW: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws', readRoots: ['/data'] }
+
+/** The roots one profile argv read-only-binds, in argv order. */
+function bwrapReadBinds(argv: readonly string[]): string[] {
+  return argv.flatMap((argument, index) => (argument === '--ro-bind' ? [argv[index + 1] as string] : []))
+}
 
 /** Every temp dir created by this file (fake launchers and runner entries), removed after each test. */
 const tempDirs: string[] = []
@@ -113,6 +120,62 @@ describe('profile dialects', () => {
     const grant = `(subpath "${realpathSync(tmpdir())}")`
     expect(profile).toContain(grant)
     expect(profile.split(grant)).toHaveLength(2)
+  })
+
+  it('bwrap confined reads: only the allow-list is bound read-only; the fresh /dev and private /proc stand', () => {
+    const readRoots = readRootsFor(CONFINED_RO) as string[]
+    const argv = bwrapProfileArgs(CONFINED_RO)
+    // `/dev` and `/proc` are mounted by the profile itself, so binding the host
+    // subtrees at those destinations would only be shadowed.
+    expect(bwrapReadBinds(argv).sort()).toEqual(readRoots.filter(root => root !== '/dev' && root !== '/proc').sort())
+    expect(argv.join(' ')).not.toContain('--ro-bind / /')
+    expect(argv).toContain('--dev')
+    expect(argv.slice(-6)).toEqual(['--dev', '/dev', '--unshare-pid', '--proc', '/proc', '--die-with-parent'])
+    expect(argv).not.toContain('--tmpfs')
+  })
+
+  it('bwrap confined reads under workspace-write: the same binds plus the ephemeral /tmp and the workspace rebind', () => {
+    const argv = bwrapProfileArgs(CONFINED_WW)
+    expect(bwrapReadBinds(argv).sort()).toEqual(readRootsFor(CONFINED_WW)?.filter(root => root !== '/dev' && root !== '/proc').sort())
+    expect(argv.slice(-5)).toEqual(['--tmpfs', '/tmp', '--bind', '/ws', '/ws'])
+    expect(argv.at(-1)).toBe('/ws')
+  })
+
+  it('landlock confined reads: the read grant is the allow-list, the read-write grants are unchanged', () => {
+    const readRoots = readRootsFor(CONFINED_RO) as string[]
+    expect(landlockProfileArgs(CONFINED_RO)).toEqual([...readRoots.flatMap(root => ['--ro', root]), '--rw', '/dev/null'])
+    expect(landlockProfileArgs(CONFINED_WW))
+      .toEqual([...readRoots.flatMap(root => ['--ro', root]), '--rw', '/dev/null', '--rw', '/tmp', '--rw', '/ws'])
+  })
+
+  it('seatbelt confined reads: the deny precedes one allow-list covering every read root', () => {
+    const readRoots = readRootsFor(CONFINED_RO) as string[]
+    const allow = `(allow file-read* ${readRoots.map(root => `(subpath "${root}")`).join(' ')})`
+    expect(seatbeltProfileArgs(CONFINED_RO)).toEqual(['-p', `${SEATBELT_RO_PROFILE} (deny file-read*) ${allow}`])
+  })
+
+  it('seatbelt confined reads keep the writable roots readable, each granted exactly once', () => {
+    const profile = seatbeltProfileArgs(CONFINED_WW)[1] as string
+    const readable = [...new Set([...(readRootsFor(CONFINED_WW) as string[]), ...writableRoots(CONFINED_WW)])]
+    expect(profile).toContain(`(allow file-read* ${readable.map(root => `(subpath "${root}")`).join(' ')})`)
+    // SBPL's last match wins, so the deny must precede the allow-list.
+    expect(profile.indexOf('(deny file-read*)')).toBeLessThan(profile.indexOf('(allow file-read* '))
+    expect(profile.split('(allow file-read* ')).toHaveLength(2)
+    for (const root of writableRoots(CONFINED_WW)) {
+      // Once as a write grant, once among the read roots: a path this call may
+      // write but cannot read back is not a boundary the mode promises.
+      expect(profile.split(`(subpath "${root}")`)).toHaveLength(3)
+    }
+  })
+
+  it('the strict boundary (an empty readRoots) still reaches the workspace and the platform roots', () => {
+    const strict: SandboxPolicy = { mode: 'read-only', workspaceRoot: '/ws', readRoots: [] }
+    const profile = seatbeltProfileArgs(strict)[1] as string
+    expect(profile).toContain('(deny file-read*)')
+    for (const root of readRootsFor(strict) as string[]) {
+      expect(profile).toContain(`(subpath "${root}")`)
+    }
+    expect(profile).toContain('(subpath "/ws")')
   })
 })
 
