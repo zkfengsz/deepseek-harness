@@ -17,9 +17,8 @@ export function WorkBroMark({ size }: WorkBroMarkProps) {
       className={css.mark}
       style={{ width: size, height: size, fontSize: Math.round(size * 0.55) }}
       aria-hidden="true"
-    >
-      W
-    </span>
+    />
+
   )
 }
 

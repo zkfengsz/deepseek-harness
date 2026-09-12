@@ -1,4 +1,6 @@
 .mark {
+  /* The monogram glyph is decorative artwork rendered as CSS content, not
+     translatable copy, so it stays out of the locale dictionary. */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8,6 +10,10 @@
   color: var(--dsw-alias-brand-primary-invert);
   font-weight: 700;
   user-select: none;
+}
+
+.mark::before {
+  content: 'W';
 }
 
 .name {
