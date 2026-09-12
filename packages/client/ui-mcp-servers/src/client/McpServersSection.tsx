@@ -233,8 +233,9 @@ export function McpServersSection(props: McpServersSectionProps): ReactNode {
                   setForm({ ...form, transport: event.target.value as McpServerTransport })
                 }}
               >
-                <option value="stdio">stdio</option>
-                <option value="streamable-http">streamable-http</option>
+                {TRANSPORT_OPTIONS.map(transport => (
+                  <option key={transport} value={transport}>{transport}</option>
+                ))}
               </select>
             </label>
             {form.transport === 'stdio'
