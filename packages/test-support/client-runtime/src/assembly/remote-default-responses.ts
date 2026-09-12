@@ -26,6 +26,8 @@ export const remoteDefaultResponses: RemoteTable = {
     'agentPresets/list': ok({ presets: [], authorable: false }),
     // api-app-controller `AppsService` constructor.
     'app/list': ok({ apps: [] }),
+    // api-mcp-controller `McpServersService` constructor.
+    'mcp/list': ok({ servers: [] }),
     // cordis-client-runner `ClientCordisInspectRegistry.sync` at apply and on `connection/reset`.
     'dynamicCordisRunner/syncInspectManifest': ok(null),
     // ui-cordis inventory at apply and on `connection/reset`.

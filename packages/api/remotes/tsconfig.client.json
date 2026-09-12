@@ -81,6 +81,9 @@
       "path": "../app-controller/tsconfig.client.json"
     },
     {
+      "path": "../mcp-controller/tsconfig.client.json"
+    },
+    {
       "path": "../../typert/protocol"
     },
     {

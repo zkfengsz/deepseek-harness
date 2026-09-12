@@ -898,6 +898,31 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  packages/api/mcp-controller:
+    dependencies:
+      '@deepseek-ai/dsh-typert-protocol':
+        specifier: workspace:^
+        version: link:../../typert/protocol
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:^
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-api-gateway':
+        specifier: workspace:^
+        version: link:../gateway
+      '@deepseek-ai/dsh-client-connection':
+        specifier: workspace:^
+        version: link:../../client/connection
+      '@deepseek-ai/dsh-mcp-manager':
+        specifier: workspace:^
+        version: link:../../mcp/mcp-manager
+      '@deepseek-ai/dsh-mcp-registry':
+        specifier: workspace:^
+        version: link:../../mcp/mcp-registry
+
   packages/api/remotes:
     dependencies:
       '@deepseek-ai/dsh-deque':
@@ -925,6 +950,9 @@ importers:
       '@deepseek-ai/dsh-api-gateway':
         specifier: workspace:^
         version: link:../gateway
+      '@deepseek-ai/dsh-api-mcp-controller':
+        specifier: workspace:^
+        version: link:../mcp-controller
       '@deepseek-ai/dsh-api-session-controller':
         specifier: workspace:^
         version: link:../session-controller
@@ -1810,6 +1838,9 @@ importers:
       '@deepseek-ai/dsh-api-app-controller':
         specifier: workspace:^
         version: link:../../api/app-controller
+      '@deepseek-ai/dsh-api-mcp-controller':
+        specifier: workspace:^
+        version: link:../../api/mcp-controller
       '@deepseek-ai/dsh-api-remotes':
         specifier: workspace:^
         version: link:../../api/remotes
@@ -2020,6 +2051,12 @@ importers:
       '@deepseek-ai/dsh-launch-environment':
         specifier: workspace:^
         version: link:../../util/launch-environment
+      '@deepseek-ai/dsh-mcp-manager':
+        specifier: workspace:^
+        version: link:../../mcp/mcp-manager
+      '@deepseek-ai/dsh-mcp-registry':
+        specifier: workspace:^
+        version: link:../../mcp/mcp-registry
       '@deepseek-ai/dsh-message-feedback':
         specifier: workspace:^
         version: link:../../feedback/message-feedback
@@ -7582,6 +7619,37 @@ importers:
         specifier: ^2026.7.4
         version: 2026.7.10(zod@4.4.3)
 
+  packages/mcp/mcp-manager:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:^
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-mcp-client':
+        specifier: workspace:^
+        version: link:../mcp-client
+      '@deepseek-ai/dsh-mcp-registry':
+        specifier: workspace:^
+        version: link:../mcp-registry
+      '@deepseek-ai/dsh-tools':
+        specifier: workspace:^
+        version: link:../../core/tools
+
+  packages/mcp/mcp-registry:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:^
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-brand':
+        specifier: workspace:^
+        version: link:../../util/brand
+      '@deepseek-ai/dsh-storage-domain':
+        specifier: workspace:^
+        version: link:../../storage/storage-domain
+
   packages/plan/plan-mode:
     dependencies:
       '@deepseek-ai/dsh-brand':
@@ -9205,6 +9273,15 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: workspace:^
         version: link:../../core/tools
+
+  packages/skill/workbro-skills:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: workspace:^
+        version: link:../../../vendor/cordis
+      '@deepseek-ai/dsh-skill':
+        specifier: workspace:^
+        version: link:../skill
 
   packages/spill/spill:
     devDependencies:

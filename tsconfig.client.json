@@ -65,6 +65,7 @@
     { "path": "./packages/api/session-controller/tsconfig.client.json" },
     { "path": "./packages/api/workspace-controller/tsconfig.client.json" },
     { "path": "./packages/api/app-controller/tsconfig.client.json" },
+    { "path": "./packages/api/mcp-controller/tsconfig.client.json" },
     { "path": "./packages/api/remotes/tsconfig.client.json" },
     { "path": "./packages/extensions/cordis-client-runner" },
     { "path": "./packages/extensions/ui-cordis" },

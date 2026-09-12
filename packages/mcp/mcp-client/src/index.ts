@@ -24,6 +24,10 @@ import type {} from '@deepseek-ai/dsh-tools'
 
 export type { McpResult } from './tools.ts'
 export type { ReconnectConfig, ResolvedReconnectPolicy } from './connection.ts'
+export type { ConnectionHandle, ConnectionOutcome } from './connection.ts'
+// Reused by `dsh-mcp-manager` so a self-service registry can start and stop the
+// same supervised connections without duplicating the reconnect/sync logic.
+export { resolveReconnectPolicy, startConnection } from './connection.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
 export const name = 'mcp-client'

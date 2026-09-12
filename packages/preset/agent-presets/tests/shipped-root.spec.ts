@@ -90,7 +90,7 @@ describe('the shipped preset root', () => {
 
     const listed = await ctx.agentPresets.list()
     expect(listed.map(preset => preset.id).sort()).toEqual(
-      ['compliance', 'cordis', 'credit', 'growth', 'kyb', 'minimal', 'ptc', 'standard'],
+      ['compliance', 'cordis', 'credit', 'minimal', 'ptc', 'risk', 'sales', 'standard'],
     )
     expect(listed.every(preset => preset.trust === 'system')).toBe(true)
     // Not `broken === undefined`: health asks whether each row's package is

@@ -79,6 +79,15 @@
     - id: app-registry
       name: '@deepseek-ai/dsh-app-registry'
 
+    # User-added MCP servers: the durable registry and the manager that holds
+    # one live connection per enabled record. Users add and remove servers from
+    # Settings; the manager reconciles connections at runtime, no restart.
+    - id: mcp-registry
+      name: '@deepseek-ai/dsh-mcp-registry'
+
+    - id: mcp-manager
+      name: '@deepseek-ai/dsh-mcp-manager'
+
     - id: session-reference
       name: '@deepseek-ai/dsh-session-reference'
 
@@ -126,6 +135,10 @@
     # WorkBro application commands over Typert Remote.
     - id: app-controller
       name: '@deepseek-ai/dsh-api-app-controller'
+
+    # MCP server commands over Typert Remote.
+    - id: mcp-controller
+      name: '@deepseek-ai/dsh-api-mcp-controller'
 
     - id: cordis-host-runner
       name: '@deepseek-ai/dsh-cordis-host-runner'
